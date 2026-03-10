@@ -21,7 +21,6 @@ OUTPUT SHAPE:
 """
 
 import json
-import logging
 from datetime import datetime, timezone
 
 from app.config.constants import (
@@ -36,8 +35,9 @@ from app.config.constants import (
 from app.services.llm.bedrock_client import BedrockClient
 from app.config.prompts import OASIS_GOLD_STANDARD_PROMPT
 from app.utils.json_utils import extract_json_array, repair_truncated_array
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 

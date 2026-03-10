@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 
 from app.config.constants import ARCHETYPE_CLINICAL_HINTS, REFERRAL_FORMAT_INSTRUCTIONS
+from app.config.pdgm_icd_loader import format_validated_codes_block
 from app.config.prompts import REFERRAL_PACKET_PROMPT_TEMPLATE
 from app.services.llm.bedrock_client import BedrockClient
 
@@ -75,6 +76,11 @@ class ReferralPacketGenerator:
             f"    - {h}" for h in hints["secondary_hints"][:max(comorbidity_count, 2)]
         )
 
+        # Build CMS-verified primary DX code block from the PDGM ICD-10 reference CSV.
+        # This constrains the LLM to real, valid codes and catches coding-rule violations
+        # (e.g. CHF I50.xx codes require CODE_FIRST — loader surfaces safe alternatives).
+        validated_codes_section = format_validated_codes_block(archetype)
+
         prompt = REFERRAL_PACKET_PROMPT_TEMPLATE.format(
             format_instruction=format_instruction,
             archetype=archetype,
@@ -88,6 +94,7 @@ class ReferralPacketGenerator:
             comorbidity_count=comorbidity_count,
             primary_hint=hints["primary_hint"],
             secondary_hints_text=secondary_hints_text,
+            validated_codes_section=validated_codes_section,
             high_risk_section=high_risk_section,
             services_hint=hints["services"],
             homebound_reason=hints["homebound_reason"],

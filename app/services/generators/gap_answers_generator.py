@@ -26,7 +26,6 @@ PRD rules:
 from __future__ import annotations
 
 import json
-import logging
 
 from app.config.constants import (
     ALL_GAP_FIELD_CODES,
@@ -44,8 +43,9 @@ from app.config.oasis_field_map import OASIS_FIELD_MAP
 from app.services.llm.bedrock_client import BedrockClient
 from app.config.prompts import GAP_ANSWER_PROMPT_TEMPLATE, GAP_FILTER_PROMPT_TEMPLATE
 from app.utils.json_utils import extract_json_object, repair_truncated_json
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def _get_mandatory_codes(archetype: str) -> set[str]:
     """Return the set of OASIS codes that must always appear in gap_answers regardless of docs."""

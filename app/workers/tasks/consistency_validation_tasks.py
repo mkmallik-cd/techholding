@@ -9,10 +9,11 @@ produced by Steps 5 and 4, runs all 6 deterministic consistency checks, then:
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
+
+from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.db.session import SessionLocal
 from app.repositories.patient_generation_repository import PatientGenerationRepository
@@ -20,7 +21,7 @@ from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.consistency_validator import ConsistencyValidator
 from app.workers.celery_app import _STEP4_QUEUE, _STEP6_QUEUE, celery_app
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @celery_app.task(
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
     soft_time_limit=270,
 )
 def validate_consistency(self, *, job_id: str) -> None:
+    set_tracking_id(job_id)
     db = SessionLocal()
     try:
         repo = PatientGenerationRepository(db)
@@ -172,3 +174,4 @@ def validate_consistency(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_tracking_id()

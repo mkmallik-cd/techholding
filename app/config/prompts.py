@@ -76,9 +76,11 @@ PATIENT ARCHETYPE CONTEXT (use this to drive all clinical content):
   comorbidity_count: {comorbidity_count}
 
 ICD-10 GUIDANCE (use these exact codes — do NOT invent invalid codes):
-  Primary diagnosis: {primary_hint}
+  Primary diagnosis hint: {primary_hint}
   Secondary diagnoses to include ({comorbidity_count} comorbidities):
 {secondary_hints_text}
+
+{validated_codes_section}
 
 HIGH-RISK MEDICATIONS to include in the discharge medication list:
 {high_risk_section}

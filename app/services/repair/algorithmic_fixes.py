@@ -5,9 +5,9 @@ plus a list of human-readable fix descriptions for logging.
 """
 from __future__ import annotations
 
-import logging
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Gap-answers helpers ────────────────────────────────────────────────────────
 

@@ -13,13 +13,13 @@ Checks performed:
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.config.constants import GG0130_LABEL_TO_LETTER, GG0170_KEY_TO_LETTER
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
