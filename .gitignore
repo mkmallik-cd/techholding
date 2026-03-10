@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.env
+output/*
+!output/.gitkeep
+venv/
+.idea/
+.DS_Store
+*.log
+*.bak
+*.tmp
+*.swp

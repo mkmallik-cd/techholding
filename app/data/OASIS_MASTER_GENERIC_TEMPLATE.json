@@ -1,0 +1,1312 @@
+{
+  "assessmentMetadata": {
+    "patientName": "[PATIENT_NAME]",
+    "patientId": "[PATIENT_ID]",
+    "dateOfBirth": "[DOB_YYYY-MM-DD]",
+    "socDate": "[SOC_DATE_YYYY-MM-DD]",
+    "rocDate": "[ROC_DATE_YYYY-MM-DD_or_null]",
+    "episodeNumber": "[EPISODE_NUMBER]",
+    "episodePeriodStart": "[START_DATE_YYYY-MM-DD]",
+    "episodePeriodEnd": "[END_DATE_YYYY-MM-DD]",
+    "assessmentStatus": "[locked_or_draft_or_submitted]",
+    "oasisVersion": "OASIS-E-2024"
+  },
+  "sections": {
+    "patient_tracking": {
+      "sectionId": "patient_tracking",
+      "sectionLabel": "Patient Tracking / Administrative",
+      "fields": [
+        {
+          "fieldCode": "M0010",
+          "fieldName": "CMS Certification Number",
+          "dataType": "string",
+          "required": true,
+          "value": "[CERTIFICATION_NUMBER]",
+          "example": "067595"
+        },
+        {
+          "fieldCode": "M0014",
+          "fieldName": "Branch State",
+          "dataType": "string",
+          "required": false,
+          "value": "[STATE_CODE_or_null]",
+          "example": "CO"
+        },
+        {
+          "fieldCode": "M0018",
+          "fieldName": "NPI for attending physician",
+          "dataType": "string",
+          "required": true,
+          "value": "[NPI_10_DIGITS]",
+          "example": "1447540208"
+        },
+        {
+          "fieldCode": "M0020",
+          "fieldName": "Patient ID Number",
+          "dataType": "string",
+          "required": true,
+          "value": "[PATIENT_ID]",
+          "example": "6161"
+        },
+        {
+          "fieldCode": "M0030",
+          "fieldName": "Start of Care Date",
+          "dataType": "date",
+          "required": true,
+          "value": "[YYYY-MM-DD]",
+          "example": "2025-09-09"
+        },
+        {
+          "fieldCode": "M0040",
+          "fieldName": "Patient Name",
+          "dataType": "string",
+          "required": true,
+          "value": "[PATIENT_FULL_NAME]",
+          "example": "ALLEN, JENNIFER Y"
+        },
+        {
+          "fieldCode": "M0050",
+          "fieldName": "Patient State of Residence",
+          "dataType": "state_code",
+          "required": true,
+          "value": "[STATE_CODE]",
+          "example": "CO"
+        },
+        {
+          "fieldCode": "M0060",
+          "fieldName": "Patient Zip Code",
+          "dataType": "string",
+          "required": true,
+          "value": "[5_DIGIT_ZIP]",
+          "example": "80249"
+        },
+        {
+          "fieldCode": "M0066",
+          "fieldName": "Birth Date",
+          "dataType": "date",
+          "required": true,
+          "value": "[YYYY-MM-DD]",
+          "example": "1974-06-25"
+        },
+        {
+          "fieldCode": "M0069",
+          "fieldName": "Gender",
+          "dataType": "enum",
+          "required": true,
+          "value": "[gender_code]",
+          "example": "F",
+          "options": [
+            {
+              "code": "M",
+              "label": "Male"
+            },
+            {
+              "code": "F",
+              "label": "Female"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M0080",
+          "fieldName": "Discipline of person completing assessment",
+          "dataType": "oasis_enum",
+          "required": true,
+          "value": "[discipline_code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "1",
+              "label": "RN"
+            },
+            {
+              "code": "2",
+              "label": "PT"
+            },
+            {
+              "code": "3",
+              "label": "SLP/ST"
+            },
+            {
+              "code": "4",
+              "label": "OT"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M0100",
+          "fieldName": "Reason assessment is being completed",
+          "dataType": "oasis_enum",
+          "required": true,
+          "value": "[reason_code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "1",
+              "label": "Start of Care - further visits planned"
+            },
+            {
+              "code": "3",
+              "label": "Resumption of care (after inpatient stay)"
+            },
+            {
+              "code": "4",
+              "label": "Recertification (follow-up) reassessment"
+            },
+            {
+              "code": "5",
+              "label": "Other follow-up"
+            },
+            {
+              "code": "6",
+              "label": "Transferred to inpatient - not discharged"
+            },
+            {
+              "code": "7",
+              "label": "Transferred to inpatient - discharged"
+            },
+            {
+              "code": "8",
+              "label": "Death at home"
+            },
+            {
+              "code": "9",
+              "label": "Discharge from agency"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M0090",
+          "fieldName": "Date Assessment Completed",
+          "dataType": "date",
+          "required": true,
+          "value": "[YYYY-MM-DD]",
+          "example": "2025-09-10"
+        },
+        {
+          "fieldCode": "M0150",
+          "fieldName": "Current Payment Sources for Home Care",
+          "dataType": "oasis_enum",
+          "required": true,
+          "value": "[payment_source_code]",
+          "example": "3",
+          "options": [
+            {
+              "code": "1",
+              "label": "Medicare (traditional fee-for-service)"
+            },
+            {
+              "code": "2",
+              "label": "Medicare (HMO/managed care)"
+            },
+            {
+              "code": "3",
+              "label": "Medicaid (traditional fee-for-service)"
+            },
+            {
+              "code": "4",
+              "label": "Medicaid (HMO/managed care)"
+            },
+            {
+              "code": "5",
+              "label": "Worker's Compensation"
+            },
+            {
+              "code": "6",
+              "label": "VA"
+            },
+            {
+              "code": "7",
+              "label": "Private insurance"
+            },
+            {
+              "code": "8",
+              "label": "Private pay"
+            },
+            {
+              "code": "9",
+              "label": "Other"
+            }
+          ]
+        }
+      ]
+    },
+    "patient_history_diagnosis": {
+      "sectionId": "patient_history_diagnosis",
+      "sectionLabel": "Patient History & Diagnosis",
+      "fields": [
+        {
+          "fieldCode": "M1000",
+          "fieldName": "Inpatient facility discharge in last 14 days",
+          "dataType": "oasis_enum",
+          "required": true,
+          "value": "[discharge_source_code]",
+          "example": "NA",
+          "skipLogic": "If NA, skip to B0200",
+          "options": [
+            {
+              "code": "NA",
+              "label": "Patient was not discharged from inpatient facility"
+            },
+            {
+              "code": "1",
+              "label": "Long-term nursing facility (NF)"
+            },
+            {
+              "code": "2",
+              "label": "Skilled nursing facility (SNF/TCU)"
+            },
+            {
+              "code": "3",
+              "label": "Short-stay acute hospital (IPPS)"
+            },
+            {
+              "code": "4",
+              "label": "Long-term care hospital (LTCH)"
+            },
+            {
+              "code": "5",
+              "label": "Inpatient rehabilitation hospital or unit (IRF)"
+            },
+            {
+              "code": "6",
+              "label": "Psychiatric hospital or unit"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1005",
+          "fieldName": "Inpatient Discharge Date (most recent)",
+          "dataType": "date",
+          "required": false,
+          "value": "[YYYY-MM-DD_or_null]",
+          "example": "2025-09-08",
+          "notes": "Required if M1000 is not NA"
+        },
+        {
+          "fieldCode": "M1021",
+          "fieldName": "Primary Diagnosis",
+          "dataType": "object",
+          "required": true,
+          "value": {
+            "description": "[ICD10_DIAGNOSIS_DESCRIPTION]",
+            "icd10Code": "[ICD10_CODE]",
+            "symptomControlRating": "[0-4]",
+            "onsetDate": "[YYYY-MM-DD]"
+          },
+          "example": {
+            "description": "Type 2 Diabetes Mellitus",
+            "icd10Code": "E11.9",
+            "symptomControlRating": "2",
+            "onsetDate": "2020-03-15"
+          }
+        },
+        {
+          "fieldCode": "M1023",
+          "fieldName": "Other Diagnoses",
+          "dataType": "array",
+          "required": false,
+          "value": [
+            {
+              "description": "[ICD10_DIAGNOSIS_DESCRIPTION]",
+              "icd10Code": "[ICD10_CODE]",
+              "symptomControlRating": "[0-4]"
+            }
+          ],
+          "example": [
+            {
+              "description": "Essential hypertension",
+              "icd10Code": "I10",
+              "symptomControlRating": "1"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1028",
+          "fieldName": "Active Diagnoses \u2013 Comorbidities",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "peripheralVascularDisease": "[true/false]",
+            "diabetesMellitus": "[true/false]",
+            "noneOfTheAbove": "[true/false]"
+          },
+          "example": {
+            "peripheralVascularDisease": false,
+            "diabetesMellitus": true,
+            "noneOfTheAbove": false
+          }
+        },
+        {
+          "fieldCode": "M1060",
+          "fieldName": "Height and Weight",
+          "dataType": "object",
+          "required": true,
+          "value": {
+            "heightInches": "[numeric]",
+            "weightPounds": "[numeric]",
+            "bmi": "[auto-calculated]",
+            "patientScaleUsedForWeight": "[true/false]"
+          },
+          "example": {
+            "heightInches": 70,
+            "weightPounds": 185,
+            "bmi": 26.5,
+            "patientScaleUsedForWeight": false
+          }
+        },
+        {
+          "fieldCode": "K0520",
+          "fieldName": "Nutritional Approaches on Admission",
+          "dataType": "array",
+          "required": false,
+          "value": [
+            "[APPROACH_1]"
+          ],
+          "example": [
+            "Therapeutic diet"
+          ],
+          "validOptions": [
+            "Parenteral/IV feeding",
+            "Feeding tube",
+            "Mechanically altered diet",
+            "Therapeutic diet",
+            "Fluid restriction"
+          ]
+        },
+        {
+          "fieldCode": "O0110",
+          "fieldName": "Special Treatments, Procedures, and Programs",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "oxygenTherapy": "[true/false]",
+            "ivMedications": "[true/false]",
+            "dialysis": "[true/false]",
+            "transfusions": "[true/false]"
+          },
+          "example": {
+            "oxygenTherapy": true,
+            "ivMedications": false,
+            "dialysis": true,
+            "transfusions": false
+          }
+        },
+        {
+          "fieldCode": "ALLERGIES",
+          "fieldName": "Allergies",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "noKnownAllergies": "[true/false]",
+            "allergyList": []
+          },
+          "example": {
+            "noKnownAllergies": true,
+            "allergyList": []
+          }
+        }
+      ]
+    },
+    "living_arrangements": {
+      "sectionId": "living_arrangements",
+      "sectionLabel": "Living Arrangements",
+      "fields": [
+        {
+          "fieldCode": "M1100",
+          "fieldName": "Patient Living Situation",
+          "dataType": "oasis_enum",
+          "required": true,
+          "value": "[living_situation_code]",
+          "example": "06",
+          "options": [
+            {
+              "code": "01",
+              "label": "Lives alone - no assistance"
+            },
+            {
+              "code": "02",
+              "label": "Lives alone - regular nighttime assistance"
+            },
+            {
+              "code": "03",
+              "label": "Lives alone - regular daytime assistance"
+            },
+            {
+              "code": "04",
+              "label": "Lives alone - frequent assistance"
+            },
+            {
+              "code": "05",
+              "label": "Lives alone - continuous assistance"
+            },
+            {
+              "code": "06",
+              "label": "Lives with other persons - no assistance"
+            },
+            {
+              "code": "07",
+              "label": "Lives with other persons - regular assistance"
+            },
+            {
+              "code": "08",
+              "label": "Lives with other persons - frequent assistance"
+            },
+            {
+              "code": "09",
+              "label": "Lives with other persons - continuous assistance"
+            }
+          ]
+        },
+        {
+          "fieldCode": "HOUSEHOLD_SUPPORT",
+          "fieldName": "Support Person",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "firstName": "[FIRST_NAME]",
+            "lastName": "[LAST_NAME]",
+            "age": "[AGE]",
+            "gender": "[M/F]",
+            "relationship": "[RELATIONSHIP]",
+            "ableWillingToAssist": "[true/false]"
+          },
+          "example": {
+            "firstName": "Sarah",
+            "lastName": "Smith",
+            "age": 35,
+            "gender": "F",
+            "relationship": "Daughter",
+            "ableWillingToAssist": true
+          }
+        },
+        {
+          "fieldCode": "HOME_SAFETY_EVAL",
+          "fieldName": "Home Safety Evaluation Completed",
+          "dataType": "boolean",
+          "required": false,
+          "value": "[true/false]",
+          "example": true
+        },
+        {
+          "fieldCode": "HOME_SAFETY_PROBLEMS",
+          "fieldName": "Home Safety Problems Identified",
+          "dataType": "array",
+          "required": false,
+          "value": [
+            "[PROBLEM_1]"
+          ],
+          "example": [
+            "No working fire extinguishers",
+            "Stairs inside home"
+          ]
+        }
+      ]
+    },
+    "sensory": {
+      "sectionId": "sensory",
+      "sectionLabel": "Sensory",
+      "fields": [
+        {
+          "fieldCode": "B0200",
+          "fieldName": "Hearing Ability",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "Adequate - no difficulty"
+            },
+            {
+              "code": "1",
+              "label": "Minimal difficulty"
+            },
+            {
+              "code": "2",
+              "label": "Moderate difficulty - must speak distinctly"
+            },
+            {
+              "code": "3",
+              "label": "Highly impaired"
+            }
+          ]
+        },
+        {
+          "fieldCode": "B1000",
+          "fieldName": "Vision Ability",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "0",
+              "label": "Adequate - sees fine detail"
+            },
+            {
+              "code": "1",
+              "label": "Impaired - sees large print only"
+            },
+            {
+              "code": "2",
+              "label": "Moderately impaired - headlines only"
+            },
+            {
+              "code": "3",
+              "label": "Highly impaired - no detail"
+            },
+            {
+              "code": "4",
+              "label": "Severely impaired - no vision"
+            }
+          ]
+        },
+        {
+          "fieldCode": "B1300",
+          "fieldName": "Health Literacy",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "0",
+              "label": "Never needs help"
+            },
+            {
+              "code": "1",
+              "label": "Rarely needs help"
+            },
+            {
+              "code": "2",
+              "label": "Sometimes needs help"
+            },
+            {
+              "code": "3",
+              "label": "Often needs help"
+            },
+            {
+              "code": "4",
+              "label": "Always needs help"
+            }
+          ]
+        }
+      ]
+    },
+    "integumentary": {
+      "sectionId": "integumentary",
+      "sectionLabel": "Integumentary",
+      "fields": [
+        {
+          "fieldCode": "M1306",
+          "fieldName": "Unhealed pressure ulcer/injury at Stage 2+?",
+          "dataType": "oasis_enum",
+          "required": true,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "No"
+            },
+            {
+              "code": "1",
+              "label": "Yes"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1311",
+          "fieldName": "Current Number of Unhealed Pressure Ulcers at Each Stage",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "stage2": "[numeric]",
+            "stage3": "[numeric]",
+            "stage4": "[numeric]"
+          },
+          "example": {
+            "stage2": 0,
+            "stage3": 1,
+            "stage4": 0
+          }
+        },
+        {
+          "fieldCode": "M1322",
+          "fieldName": "Current Number of Stage 1 Pressure Injuries",
+          "dataType": "integer",
+          "required": false,
+          "value": "[numeric]",
+          "example": 0
+        },
+        {
+          "fieldCode": "M1330",
+          "fieldName": "Patient has Stasis Ulcer?",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "No"
+            },
+            {
+              "code": "1",
+              "label": "Yes"
+            }
+          ]
+        }
+      ]
+    },
+    "respiratory": {
+      "sectionId": "respiratory",
+      "sectionLabel": "Respiratory",
+      "fields": [
+        {
+          "fieldCode": "M1400",
+          "fieldName": "When is patient dyspneic or short of breath?",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "Patient is not short of breath"
+            },
+            {
+              "code": "1",
+              "label": "Short of breath only with exertion"
+            },
+            {
+              "code": "2",
+              "label": "Short of breath with minimal exertion"
+            },
+            {
+              "code": "3",
+              "label": "Short of breath at rest"
+            },
+            {
+              "code": "4",
+              "label": "Requires oxygen"
+            }
+          ]
+        },
+        {
+          "fieldCode": "OXYGEN_SATURATION",
+          "fieldName": "Oxygen Saturation",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "o2SatOnRoomAir": "[0-100]",
+            "o2SatOnOxygen": "[0-100_or_null]"
+          },
+          "example": {
+            "o2SatOnRoomAir": 91,
+            "o2SatOnOxygen": null
+          }
+        },
+        {
+          "fieldCode": "RESPIRATORY_RATE",
+          "fieldName": "Respiratory Rate",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "rate": "[numeric]",
+            "pattern": "[regular/irregular]"
+          },
+          "example": {
+            "rate": 20,
+            "pattern": "regular"
+          }
+        }
+      ]
+    },
+    "cardiac": {
+      "sectionId": "cardiac",
+      "sectionLabel": "Cardiac",
+      "fields": [
+        {
+          "fieldCode": "BLOOD_PRESSURE",
+          "fieldName": "Blood Pressure",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "systolic": "[numeric]",
+            "diastolic": "[numeric]"
+          },
+          "example": {
+            "systolic": 135,
+            "diastolic": 85
+          }
+        },
+        {
+          "fieldCode": "HEART_RATE",
+          "fieldName": "Heart Rate / Pulse",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "rate": "[numeric]",
+            "rhythm": "[regular/irregular]"
+          },
+          "example": {
+            "rate": 78,
+            "rhythm": "regular"
+          }
+        }
+      ]
+    },
+    "neuro_emotional_behavioral": {
+      "sectionId": "neuro_emotional_behavioral",
+      "sectionLabel": "Neuro / Emotional / Behavioral",
+      "fields": [
+        {
+          "fieldCode": "M1700",
+          "fieldName": "Cognitive Functioning",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "Alert/oriented, can focus and shift attention"
+            },
+            {
+              "code": "1",
+              "label": "Difficulty focusing or shifting attention"
+            },
+            {
+              "code": "2",
+              "label": "Disoriented, cannot focus"
+            },
+            {
+              "code": "3",
+              "label": "Comatose or no observable response"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1710",
+          "fieldName": "When Confused (past 14 days)",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": null,
+          "options": [
+            {
+              "code": "0",
+              "label": "Patient not confused"
+            },
+            {
+              "code": "1",
+              "label": "Confused \u226450% of time"
+            },
+            {
+              "code": "2",
+              "label": "Confused >50% of time"
+            },
+            {
+              "code": "3",
+              "label": "Consistently confused"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1720",
+          "fieldName": "When Anxious",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": null,
+          "options": [
+            {
+              "code": "0",
+              "label": "Patient not anxious"
+            },
+            {
+              "code": "1",
+              "label": "Anxious \u226450% of time"
+            },
+            {
+              "code": "2",
+              "label": "Anxious >50% of time"
+            },
+            {
+              "code": "3",
+              "label": "Consistently anxious"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1740",
+          "fieldName": "Psychiatric Symptoms (\u22651/week)",
+          "dataType": "array",
+          "required": false,
+          "value": [
+            "[SYMPTOM_1]"
+          ],
+          "example": [],
+          "validOptions": [
+            "Memory deficit",
+            "Impaired decision making",
+            "Verbal disruption",
+            "Physical aggression",
+            "Disruptive/inappropriate",
+            "Delusional/hallucinatory",
+            "None"
+          ]
+        }
+      ]
+    },
+    "elimination": {
+      "sectionId": "elimination",
+      "sectionLabel": "Elimination",
+      "fields": [
+        {
+          "fieldCode": "M1610",
+          "fieldName": "Urinary Incontinence or Catheter",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "No incontinence or catheter"
+            },
+            {
+              "code": "1",
+              "label": "Continent with catheter/ostomy"
+            },
+            {
+              "code": "2",
+              "label": "Incontinence \u226450% of time"
+            },
+            {
+              "code": "3",
+              "label": "Incontinence >50% of time"
+            },
+            {
+              "code": "4",
+              "label": "Totally incontinent or indwelling catheter"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1620",
+          "fieldName": "Bowel Incontinence",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "Continent or no incontinence"
+            },
+            {
+              "code": "1",
+              "label": "Rare incontinence (\u22641/week)"
+            },
+            {
+              "code": "2",
+              "label": "Occasional (2-3/week)"
+            },
+            {
+              "code": "3",
+              "label": "Frequent (>3/week)"
+            }
+          ]
+        }
+      ]
+    },
+    "nutritional_status": {
+      "sectionId": "nutritional_status",
+      "sectionLabel": "Nutritional Status",
+      "fields": [
+        {
+          "fieldCode": "K0510",
+          "fieldName": "Nutritional Status",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "Adequate"
+            },
+            {
+              "code": "1",
+              "label": "Predicted inadequate"
+            },
+            {
+              "code": "2",
+              "label": "Altered - less than requirements"
+            },
+            {
+              "code": "3",
+              "label": "Altered - more than requirements"
+            }
+          ]
+        },
+        {
+          "fieldCode": "K0520",
+          "fieldName": "Nutritional Approaches",
+          "dataType": "array",
+          "required": false,
+          "value": [
+            "[APPROACH_1]"
+          ],
+          "example": [
+            "Therapeutic diet"
+          ],
+          "validOptions": [
+            "Parenteral/IV feeding",
+            "Feeding tube",
+            "Mechanically altered diet",
+            "Therapeutic diet",
+            "Fluid restriction"
+          ]
+        }
+      ]
+    },
+    "medications": {
+      "sectionId": "medications",
+      "sectionLabel": "Medications",
+      "fields": [
+        {
+          "fieldCode": "N0415",
+          "fieldName": "High-Risk Drug Classes",
+          "dataType": "array",
+          "required": false,
+          "value": [
+            {
+              "drugClass": "[DRUG_CLASS]",
+              "indication": "[INDICATION]"
+            }
+          ],
+          "example": [
+            {
+              "drugClass": "Anticoagulant",
+              "indication": "Atrial fibrillation"
+            }
+          ]
+        },
+        {
+          "fieldCode": "IV_ACCESS",
+          "fieldName": "Intravenous Access",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "hasAccess": "[true/false]",
+            "type": "[IV_TYPE]"
+          },
+          "example": {
+            "hasAccess": false,
+            "type": null
+          }
+        }
+      ]
+    },
+    "functional_abilities_goals": {
+      "sectionId": "functional_abilities_goals",
+      "sectionLabel": "Functional Abilities and Goals (GG)",
+      "fields": [
+        {
+          "fieldCode": "GG0100",
+          "fieldName": "Prior Functioning (BASELINE)",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "selfCare": "[0-6]",
+            "mobility": "[0-6]"
+          },
+          "example": {
+            "selfCare": "6",
+            "mobility": "6"
+          }
+        },
+        {
+          "fieldCode": "GG0130",
+          "fieldName": "Self-Care Activities",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "eating": "[code]",
+            "oralHygiene": "[code]",
+            "toiletingHygiene": "[code]",
+            "showerBatheSelf": "[code]"
+          },
+          "example": {
+            "eating": "06",
+            "oralHygiene": "06",
+            "toiletingHygiene": "06",
+            "showerBatheSelf": "04"
+          }
+        },
+        {
+          "fieldCode": "GG0170",
+          "fieldName": "Mobility",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "toiletTransfer": "[code]",
+            "walk10Feet": "[code]"
+          },
+          "example": {
+            "toiletTransfer": "04",
+            "walk10Feet": "05"
+          }
+        }
+      ]
+    },
+    "adls_iadls": {
+      "sectionId": "adls_iadls",
+      "sectionLabel": "Activities of Daily Living (ADLs)",
+      "fields": [
+        {
+          "fieldCode": "M1800",
+          "fieldName": "Grooming",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "0",
+              "label": "Able independently"
+            },
+            {
+              "code": "1",
+              "label": "Utensils within reach"
+            },
+            {
+              "code": "2",
+              "label": "Needs reminding"
+            },
+            {
+              "code": "3",
+              "label": "Needs assistance"
+            },
+            {
+              "code": "4",
+              "label": "Unable"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1830",
+          "fieldName": "Bathing",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "2",
+          "options": [
+            {
+              "code": "0",
+              "label": "Able independently"
+            },
+            {
+              "code": "1",
+              "label": "Reminding/supervision only"
+            },
+            {
+              "code": "2",
+              "label": "Intermittent assistance"
+            },
+            {
+              "code": "3",
+              "label": "Continuous assistance"
+            },
+            {
+              "code": "4",
+              "label": "Unable"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1850",
+          "fieldName": "Transferring",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "0",
+              "label": "Able independently"
+            },
+            {
+              "code": "1",
+              "label": "Minimal assistance/device"
+            },
+            {
+              "code": "2",
+              "label": "Needs human assistance"
+            },
+            {
+              "code": "3",
+              "label": "Unable"
+            },
+            {
+              "code": "4",
+              "label": "Bedfast"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1860",
+          "fieldName": "Ambulation/Locomotion",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "1",
+          "options": [
+            {
+              "code": "0",
+              "label": "Able independently"
+            },
+            {
+              "code": "1",
+              "label": "With one-handed device"
+            },
+            {
+              "code": "2",
+              "label": "With two-handed device"
+            },
+            {
+              "code": "3",
+              "label": "With walker/crutches"
+            },
+            {
+              "code": "4",
+              "label": "With human assistance"
+            },
+            {
+              "code": "5",
+              "label": "Non-ambulatory, can wheel"
+            },
+            {
+              "code": "6",
+              "label": "Non-ambulatory, cannot wheel"
+            }
+          ]
+        },
+        {
+          "fieldCode": "M1870",
+          "fieldName": "Feeding",
+          "dataType": "oasis_enum",
+          "required": false,
+          "value": "[code]",
+          "example": "0",
+          "options": [
+            {
+              "code": "0",
+              "label": "Able independently"
+            },
+            {
+              "code": "1",
+              "label": "Reminding/setup only"
+            },
+            {
+              "code": "2",
+              "label": "Minimal assistance"
+            },
+            {
+              "code": "3",
+              "label": "Needs human assistance"
+            },
+            {
+              "code": "4",
+              "label": "Unable - tube feeding"
+            }
+          ]
+        }
+      ]
+    },
+    "care_management": {
+      "sectionId": "care_management",
+      "sectionLabel": "Care Management",
+      "fields": [
+        {
+          "fieldCode": "M2102",
+          "fieldName": "Types and Sources of Assistance",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "supervisionSafetyCognitive": "[code]",
+            "financialManagement": "[code]"
+          },
+          "example": {
+            "supervisionSafetyCognitive": "0",
+            "financialManagement": "0"
+          },
+          "options": [
+            {
+              "code": "0",
+              "label": "No assistance needed"
+            },
+            {
+              "code": "1",
+              "label": "Assistance needed but not provided"
+            },
+            {
+              "code": "2",
+              "label": "Assistance provided"
+            },
+            {
+              "code": "3",
+              "label": "Intensive assistance provided"
+            }
+          ]
+        },
+        {
+          "fieldCode": "ADVANCE_DIRECTIVES",
+          "fieldName": "Advance Directives on File",
+          "dataType": "object",
+          "required": false,
+          "value": {
+            "livingWill": "[true/false]",
+            "doNotResuscitate": "[true/false]",
+            "healthcarePOA": "[true/false]"
+          },
+          "example": {
+            "livingWill": true,
+            "doNotResuscitate": true,
+            "healthcarePOA": false
+          }
+        }
+      ]
+    }
+  },
+  "validationRules": {
+    "conditional_requirements": [
+      {
+        "ruleId": "M1005_depends_on_M1000",
+        "condition": "If M1000 is not 'NA', then M1005 must be present",
+        "severity": "error"
+      },
+      {
+        "ruleId": "M1311_depends_on_M1306",
+        "condition": "If M1306 = '1', then M1311 must be present",
+        "severity": "error"
+      }
+    ]
+  },
+  "skipLogicRules": [
+    {
+      "fromField": "M1000",
+      "condition": "If value = 'NA'",
+      "skipToField": "B0200"
+    },
+    {
+      "fromField": "M1306",
+      "condition": "If value = '0'",
+      "skipToField": "M1322"
+    }
+  ]
+}
