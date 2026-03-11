@@ -52,7 +52,7 @@ class ConsistencyValidator:
 
         Args:
             gap_answers: Step 4 gap answers dict (authoritative source of truth).
-            gold_standard: Step 6 gold standard dict (contains "items" list).
+            gold_standard: Step 6 gold standard flat dict mapping item codes to values.
             metadata: Optional patient metadata dict (currently unused).
 
         Returns:
@@ -60,9 +60,9 @@ class ConsistencyValidator:
         """
         # Flatten gold standard items into a {code: value} dict for easy O(1) lookups.
         items: dict[str, str | None] = {
-            item.get("item_code") or item.get("code"): item.get("value")
-            for item in gold_standard.get("items", [])
-            if item.get("item_code") or item.get("code")
+            str(code).strip().upper(): str(value) if value is not None else None
+            for code, value in gold_standard.items()
+            if not code.startswith("_")
         }
 
         all_errors: list[dict] = []
@@ -188,49 +188,68 @@ class ConsistencyValidator:
         """GG0130 and GG0170 admission (X1) codes in gold standard must match gap_answers."""
         errors: list[dict] = []
 
-        gg0130_raw = _lookup_gap_answer(gap_answers, "GG0130") or gap_answers.get("GG0130")
-        if isinstance(gg0130_raw, dict):
-            for label, expected_value in gg0130_raw.items():
-                letter_or_letters = GG0130_LABEL_TO_LETTER.get(label)
-                if letter_or_letters is None:
-                    continue
-                letters = (
-                    [letter_or_letters]
-                    if isinstance(letter_or_letters, str)
-                    else letter_or_letters
-                )
-                for letter in letters:
-                    code = f"GG0130{letter}1"
-                    actual = items.get(code)
-                    if actual is not None and str(actual) != str(expected_value):
-                        errors.append({
-                            "check": "gg_consistency",
-                            "code": code,
-                            "expected": str(expected_value),
-                            "actual": str(actual),
-                            "message": (
-                                f"{code}: gold standard has '{actual}' but "
-                                f"gap_answers GG0130['{label}'] = '{expected_value}'"
-                            ),
-                        })
+        # Helper to get the expected value, handling both specific codes and legacy grouped dicts
+        def _get_expected_gg(base_prefix: str, mappings: dict, code: str, expected_letter: str) -> str | None:
+            # First try direct code lookup (PRD 2.2 compliant flattened format)
+            val = _lookup_gap_answer(gap_answers, code)
+            if val is not None:
+                return str(val)
+            
+            # Fallback to legacy grouped dictionary (e.g. {"Eating": "05"})
+            legacy_dict = _lookup_gap_answer(gap_answers, base_prefix) or gap_answers.get(base_prefix)
+            if isinstance(legacy_dict, dict):
+                # Reverse lookup the keys that map to this expected letter
+                for key, mapped in mappings.items():
+                    letters = mapped if isinstance(mapped, list) else [mapped]
+                    if expected_letter in letters:
+                        legacy_val = legacy_dict.get(key)
+                        if legacy_val is not None:
+                            return str(legacy_val)
+            return None
 
-        gg0170_raw = _lookup_gap_answer(gap_answers, "GG0170") or gap_answers.get("GG0170")
-        if isinstance(gg0170_raw, dict):
-            for key, expected_value in gg0170_raw.items():
-                letter = GG0170_KEY_TO_LETTER.get(key)
-                if letter is None:
-                    continue
-                code = f"GG0170{letter}1"
+        # ── GG0130 Self-Care ──────────────────────────────────────────────────
+        gg0130_letters = set()
+        for letter_or_letters in GG0130_LABEL_TO_LETTER.values():
+            if isinstance(letter_or_letters, list):
+                gg0130_letters.update(letter_or_letters)
+            else:
+                gg0130_letters.add(letter_or_letters)
+
+        for letter in sorted(gg0130_letters):
+            code = f"GG0130{letter}1"
+            expected_value = _get_expected_gg("GG0130", GG0130_LABEL_TO_LETTER, code, letter)
+            
+            if expected_value is not None:
                 actual = items.get(code)
-                if actual is not None and str(actual) != str(expected_value):
+                if actual is not None and str(actual).strip() != expected_value.strip():
                     errors.append({
                         "check": "gg_consistency",
                         "code": code,
-                        "expected": str(expected_value),
+                        "expected": expected_value,
                         "actual": str(actual),
                         "message": (
                             f"{code}: gold standard has '{actual}' but "
-                            f"gap_answers GG0170['{key}'] = '{expected_value}'"
+                            f"gap_answers source = '{expected_value}'"
+                        ),
+                    })
+
+        # ── GG0170 Mobility ───────────────────────────────────────────────────
+        gg0170_letters = set(GG0170_KEY_TO_LETTER.values())
+        for letter in sorted(gg0170_letters):
+            code = f"GG0170{letter}1"
+            expected_value = _get_expected_gg("GG0170", GG0170_KEY_TO_LETTER, code, letter)
+            
+            if expected_value is not None:
+                actual = items.get(code)
+                if actual is not None and str(actual).strip() != expected_value.strip():
+                    errors.append({
+                        "check": "gg_consistency",
+                        "code": code,
+                        "expected": expected_value,
+                        "actual": str(actual),
+                        "message": (
+                            f"{code}: gold standard has '{actual}' but "
+                            f"gap_answers source = '{expected_value}'"
                         ),
                     })
 

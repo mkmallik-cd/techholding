@@ -128,24 +128,127 @@ def _build_sections(unanswered: dict) -> list[dict]:
         Sections are ordered per _SECTION_ORDER; within each section codes
         preserve their original iteration order.
     """
+    from app.config.constants import (
+        GG0130_LABEL_TO_LETTER,
+        GG0170_KEY_TO_LETTER,
+    )
+
     buckets: dict[str, list[dict]] = {s: [] for s in _SECTION_ORDER}
 
     for code, entry in unanswered.items():
         if not isinstance(entry, dict):
             continue
+        
         section_name = _code_to_section(code)
         meta = OASIS_FIELD_MAP.get(code)
-        title = (
+        base_title = (
             meta["question"]
             if meta and meta.get("question")
             else entry.get("question", code)
         )
+        answer = entry.get("answer")
+
+        # PRD 2.2 Formatting Fix:
+        # If the LLM returned a dictionary for grouped codes like GG0130, GG0170, or GG0100, 
+        # we must flatten it into individual questions with specific field codes and string answers.
+        # This occurs because these codes are grouped during generation to save prompt space.
+        if isinstance(answer, dict) and code.startswith("GG"):
+            for sub_key, sub_val in answer.items():
+                if not isinstance(sub_val, str):
+                    sub_val = str(sub_val)
+
+                sub_code = code
+                if code == "GG0130":
+                    letter_hint = GG0130_LABEL_TO_LETTER.get(sub_key, GG0130_LABEL_TO_LETTER.get(sub_key.title()))
+                    if letter_hint:
+                        if isinstance(letter_hint, list):
+                            # e.g., "Dressing" -> both D and E. Add D now, E manually below or loop
+                            for l in letter_hint:
+                                specific_code = f"GG0130{l}1" # 1 = Admission Performance for 0130 grouped
+                                q_entry = {
+                                    "id": specific_code.lower(),
+                                    "title": f"{base_title} - {sub_key}",
+                                    "type": _derive_answer_type(specific_code),
+                                    "field_codes": [specific_code],
+                                    "answer": sub_val,
+                                    "why_gap": "Not determinable from provided source documents",
+                                }
+                                buckets[section_name].append(q_entry)
+                            continue
+                        else:
+                            sub_code = f"GG0130{letter_hint}1"
+                elif code == "GG0170":
+                    letter_hint = GG0170_KEY_TO_LETTER.get(sub_key, GG0170_KEY_TO_LETTER.get(sub_key.title()))
+                    if letter_hint:
+                        # For GG0170 grouped, we assume 1 (Admission Performance) unless the answer has 2 elements?
+                        # Since gap primarily documents admission, we default to 1 for structured answers unless specified.
+                        # Typically the LLM returns individual specific goals too (like GG0170C2), so this grouped one is admission.
+                        sub_code = f"GG0170{letter_hint}1"
+                elif code == "GG0100":
+                    mapping = {"self care": "A", "indoor mobility": "B", "stairs": "C", "functional cognition": "D"}
+                    letter = mapping.get(str(sub_key).lower().strip())
+                    if letter:
+                        sub_code = f"GG0100{letter}"
+
+                q_entry = {
+                    "id": sub_code.lower(),
+                    "title": f"{base_title} - {sub_key}",
+                    "type": _derive_answer_type(sub_code),
+                    "field_codes": [sub_code],
+                    "answer": sub_val,
+                    "why_gap": "Not determinable from provided source documents",
+                }
+                buckets[section_name].append(q_entry)
+            continue # Skip adding the grouped object itself
+
+        # Default behaviour for non-grouped or non-dict answers
+        # IMPROVEMENT: If the code is generic (GG0130/GG0170/GG0100), try to resolve the specific sub-code from the title
+        resolved_code = code
+        if code in ["GG0130", "GG0170", "GG0100"]:
+            # Helper for word-set matching
+            def _words_match(label, title):
+                # Skip single-letter keys or numeric keys which are ambiguous in titles
+                if len(label.strip()) <= 2:
+                    return False
+                label_words = {w.lower() for w in label.split() if len(w) > 2}
+                if not label_words: return False # Still skip if no significant words
+                title_words = {w.lower() for w in title.replace("-", " ").replace("_", " ").split()}
+                return label_words.issubset(title_words)
+
+            if code == "GG0130":
+                for label, letter in GG0130_LABEL_TO_LETTER.items():
+                    if _words_match(label, base_title):
+                        if isinstance(letter, str):
+                            resolved_code = f"GG0130{letter}1"
+                            break
+                        elif isinstance(letter, list):
+                            # Disambiguate Dressing
+                            if "upper" in base_title.lower():
+                                resolved_code = "GG0130D1"
+                            elif "lower" in base_title.lower():
+                                resolved_code = "GG0130E1"
+                            else:
+                                resolved_code = f"GG0130{letter[0]}1"
+                            break
+            elif code == "GG0170":
+                for label, letter in GG0170_KEY_TO_LETTER.items():
+                    # Check descriptive label first
+                    if _words_match(label.replace("_", " "), base_title):
+                        resolved_code = f"GG0170{letter}1"
+                        break
+            elif code == "GG0100":
+                mapping = {"self care": "A", "indoor mobility": "B", "stairs": "C", "functional cognition": "D"}
+                for label, letter in mapping.items():
+                    if label.lower() in base_title.lower():
+                        resolved_code = f"GG0100{letter}"
+                        break
+
         question_entry = {
-            "id": code.lower(),
-            "title": title,
-            "type": _derive_answer_type(code),
-            "field_codes": [code],
-            "answer": entry.get("answer"),
+            "id": resolved_code.lower(),
+            "title": base_title,
+            "type": _derive_answer_type(resolved_code),
+            "field_codes": [resolved_code],
+            "answer": answer,
             "why_gap": "Not determinable from provided source documents",
         }
         buckets[section_name].append(question_entry)
