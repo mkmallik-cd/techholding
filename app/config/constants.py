@@ -723,7 +723,8 @@ _BATCH_E_WOUND_RESPIRATORY: list[str] = [
     "M1600", "M1610", "M1615", "M1620", "M1630",
     "M2001", "M2003", "M2005", "M2010", "M2016",
     "M2020", "M2030", "M2040",
-    "N0415",
+    # N0415 is handled deterministically from gap_answers — not LLM-generated.
+    # Sub-flags N0415E/H/I/F are injected by OasisGoldStandardGenerator._decompose_n0415_from_gap_answers().
     "M2100", "M2102", "M2110",
 ]
 

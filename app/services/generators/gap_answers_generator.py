@@ -3,11 +3,36 @@ app.services.generators.gap_answers_generator — Step 4 gap answers generator.
 
 PRD reference: Step 4
 
-Generates ``tap_tap_gap_answers.json``: a record of OASIS field code answers in the
-Tap/Tap clinician submit format (``PUT /assessment/unanswered-response``).
+Generates ``tap_tap_gap_answers.json``: a record of OASIS field code answers grouped into
+clinical sections per PRD Section 6.
 
 INPUT:   referral_packet.txt + ambient_scribe.txt (optional) + Step 1 archetype metadata
-OUTPUT:  {"unanswered_response": {"FIELD_CODE": {"question": "...", "answer": "..."}, ...}, "status": "draft"}
+OUTPUT:
+  {
+    "_synthetic_label": "SYNTHETIC — NOT REAL PATIENT DATA",
+    "sections": [
+      {
+        "section": "<Section Name>",
+        "questions": [
+          {
+            "id": "<field_code_lower>",
+            "title": "<question text>",
+            "type": "radio|checkbox|text",
+            "field_codes": ["<CODE>"],
+            "answer": <value>,
+            "why_gap": "Not determinable from provided source documents"
+          },
+          ...
+        ]
+      },
+      ...
+    ],
+    "fields_auto_extracted": {
+      "from_referral": [],
+      "from_scribe": [],
+      "from_medications": []
+    }
+  }
 
 Flow:
     Phase 2 (Filter): Start from 130+ gap field codes; filter to codes NOT answerable from
@@ -46,6 +71,91 @@ from app.utils.json_utils import extract_json_object, repair_truncated_json
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# ── Section grouping rules ─────────────────────────────────────────────────────
+
+_SECTION_ORDER = [
+    "Cognitive",
+    "Mood",
+    "Functional - Self Care",
+    "Functional - Mobility",
+    "ADL",
+    "Medications",
+    "Clinical",
+]
+
+
+def _code_to_section(code: str) -> str:
+    """Map an OASIS field code to its clinical section label."""
+    if code.startswith("C"):
+        return "Cognitive"
+    if code.startswith("D"):
+        return "Mood"
+    if code == "GG0130":
+        return "Functional - Self Care"
+    if code == "GG0170" or code.startswith("GG0170") or code.startswith("GG0100") or code.startswith("GG0110"):
+        return "Functional - Mobility"
+    if code.startswith("GG"):
+        return "Functional - Self Care"
+    if code.startswith("M18") or code.startswith("M19"):
+        return "ADL"
+    if code.startswith("N"):
+        return "Medications"
+    return "Clinical"
+
+
+def _derive_answer_type(code: str) -> str:
+    """Derive the answer widget type for a given OASIS code."""
+    meta = OASIS_FIELD_MAP.get(code)
+    if meta is None:
+        return "text"
+    data_type = meta.get("dataType", "text")
+    if data_type == "enum":
+        return "radio"
+    if data_type == "array":
+        return "checkbox"
+    return "text"
+
+
+def _build_sections(unanswered: dict) -> list[dict]:
+    """Convert a flat unanswered_response dict into the PRD sections array format.
+
+    Args:
+        unanswered: Flat dict keyed {CODE: {question, answer}}.
+
+    Returns:
+        List of section dicts, each with 'section' and 'questions' keys.
+        Sections are ordered per _SECTION_ORDER; within each section codes
+        preserve their original iteration order.
+    """
+    buckets: dict[str, list[dict]] = {s: [] for s in _SECTION_ORDER}
+
+    for code, entry in unanswered.items():
+        if not isinstance(entry, dict):
+            continue
+        section_name = _code_to_section(code)
+        meta = OASIS_FIELD_MAP.get(code)
+        title = (
+            meta["question"]
+            if meta and meta.get("question")
+            else entry.get("question", code)
+        )
+        question_entry = {
+            "id": code.lower(),
+            "title": title,
+            "type": _derive_answer_type(code),
+            "field_codes": [code],
+            "answer": entry.get("answer"),
+            "why_gap": "Not determinable from provided source documents",
+        }
+        buckets[section_name].append(question_entry)
+
+    return [
+        {"section": section_name, "questions": questions}
+        for section_name in _SECTION_ORDER
+        if (questions := buckets[section_name])
+    ]
+
 
 def _get_mandatory_codes(archetype: str) -> set[str]:
     """Return the set of OASIS codes that must always appear in gap_answers regardless of docs."""
@@ -118,8 +228,13 @@ class GapAnswersGenerator:
         unanswered_response = self._validate_and_fix_phq(unanswered_response)
 
         return {
-            "unanswered_response": unanswered_response,
-            "status": "draft",
+            "_synthetic_label": "SYNTHETIC — NOT REAL PATIENT DATA",
+            "sections": _build_sections(unanswered_response),
+            "fields_auto_extracted": {
+                "from_referral": [],
+                "from_scribe": [],
+                "from_medications": [],
+            },
         }
 
     def _filter_answerable_codes(

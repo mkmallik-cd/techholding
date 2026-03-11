@@ -2,7 +2,7 @@
 
 Reads the oasis_gold_standard.json and tap_tap_gap_answers.json artifacts
 produced by Steps 5 and 4, runs all 6 deterministic consistency checks, then:
-  - valid:   marks the job COMPLETED and writes validation_report.json
+  - valid:   marks the job COMPLETED and writes validation_report.json with status="passed"
   - invalid: marks the job INVALID  and writes validation_report.json
   - crash:   marks the job FAILED   (technical error ≠ clinical invalidity)
 """
@@ -89,7 +89,7 @@ def validate_consistency(self, *, job_id: str) -> None:
 
         # ── Write validation_report.json ───────────────────────────────────────
         validation_report = {
-            "status": "valid" if result.is_valid else "invalid",
+            "status": "passed" if result.is_valid else "invalid",
             "checks_run": result.checks_run,
             "checks_passed": result.checks_passed,
             "errors": result.errors,

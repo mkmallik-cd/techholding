@@ -36,6 +36,7 @@ from app.services.llm.bedrock_client import BedrockClient
 from app.config.prompts import OASIS_GOLD_STANDARD_PROMPT
 from app.utils.json_utils import extract_json_array, repair_truncated_array
 from app.utils.logger import get_logger
+from app.utils.gap_answers_utils import lookup_gap_answer as _lookup_gap_answer
 
 logger = get_logger(__name__)
 
@@ -90,11 +91,13 @@ class OasisGoldStandardGenerator:
             self._copy_from_gap_answers(gap_answers, PHQ_COPY_CODES)
         )
         gg_adl_items = self._expand_gg_adl_from_gap_answers(gap_answers)
+        n0415_items = self._decompose_n0415_from_gap_answers(gap_answers)
         logger.info(
-            "Step 6: copied %d BIMS + %d PHQ + %d GG/ADL items from gap_answers",
+            "Step 6: copied %d BIMS + %d PHQ + %d GG/ADL + %d N0415 items from gap_answers",
             len(bims_items),
             len(phq_items),
             len(gg_adl_items),
+            len(n0415_items),
         )
 
         # Step 2: Run 5 LLM section batches for all remaining OASIS fields.
@@ -131,7 +134,7 @@ class OasisGoldStandardGenerator:
             code = item.get("item_code", "")
             if code:
                 item_map[code] = item
-        for item in gg_adl_items + bims_items + phq_items:
+        for item in gg_adl_items + bims_items + phq_items + n0415_items:
             item_map[item["item_code"]] = item
 
         # Step 3: Apply 8 CMS deterministic skip-logic rules.
@@ -238,7 +241,7 @@ class OasisGoldStandardGenerator:
         return phq_items
 
     def _copy_from_gap_answers(self, gap_answers: dict, codes: list[str]) -> list[dict]:
-        """Copy a list of codes verbatim from gap_answers.unanswered_response.
+        """Copy a list of codes verbatim from gap_answers.
 
         Args:
             gap_answers: Full gap answers dict from Step 4.
@@ -247,25 +250,31 @@ class OasisGoldStandardGenerator:
         Returns:
             List of item dicts with source="gap_answers".
         """
-        unanswered = gap_answers.get("unanswered_response", {})
         items: list[dict] = []
         for code in codes:
-            entry = unanswered.get(code)
-            if entry:
-                answer = entry.get("answer")
+            answer = _lookup_gap_answer(gap_answers, code)
+            if answer is not None:
+                # Resolve human-readable question text from field map or gap_answers
+                meta = None
+                try:
+                    from app.config.oasis_field_map import OASIS_FIELD_MAP
+                    meta = OASIS_FIELD_MAP.get(code)
+                except Exception:
+                    pass
+                question_text = (meta["question"] if meta and meta.get("question") else code)
                 items.append({
                     "item_code": code,
                     "value": str(answer) if answer is not None else None,
                     "rationale": (
                         f"Copied verbatim from tap_tap_gap_answers.json (Step 4 assessment). "
-                        f"Question: {entry.get('question', code)}"
+                        f"Question: {question_text}"
                     ),
                     "confidence": "high",
                     "source": "gap_answers",
                 })
             else:
                 logger.warning(
-                    "Step 6: %s not found in gap_answers unanswered_response — skipping",
+                    "Step 6: %s not found in gap_answers — skipping",
                     code,
                 )
         return items
@@ -282,13 +291,12 @@ class OasisGoldStandardGenerator:
         a specific X1 code.  GG0170 is stored as {"A": "04", ...}; each key maps to
         the corresponding X1 code.  M-ADL codes are stored as individual entries.
         """
-        unanswered = gap_answers.get("unanswered_response", {})
         items: list[dict] = []
 
         # ── GG0130 Self-Care X1 (admission performance) ───────────────────────────────────
-        gg0130_entry = unanswered.get("GG0130")
-        if gg0130_entry and isinstance(gg0130_entry.get("answer"), dict):
-            gg0130_dict: dict = gg0130_entry["answer"]
+        gg0130_answer = _lookup_gap_answer(gap_answers, "GG0130")
+        if gg0130_answer and isinstance(gg0130_answer, dict):
+            gg0130_dict: dict = gg0130_answer
             for label, letter_or_letters in GG0130_LABEL_TO_LETTER.items():
                 val = gg0130_dict.get(label)
                 if val is not None:
@@ -320,9 +328,9 @@ class OasisGoldStandardGenerator:
             )
 
         # ── GG0170 Mobility X1 (admission performance) ────────────────────────────────────
-        gg0170_entry = unanswered.get("GG0170")
-        if gg0170_entry and isinstance(gg0170_entry.get("answer"), dict):
-            gg0170_dict: dict = gg0170_entry["answer"]
+        gg0170_answer = _lookup_gap_answer(gap_answers, "GG0170")
+        if gg0170_answer and isinstance(gg0170_answer, dict):
+            gg0170_dict: dict = gg0170_answer
             # Track which letters have been written to avoid duplicate items when
             # multiple snake_case keys map to the same letter (e.g. roll_left / roll_right).
             seen_letters: set[str] = set()
@@ -357,22 +365,21 @@ class OasisGoldStandardGenerator:
 
         # ── ADL M-codes ───────────────────────────────────────────────────────────────────
         for code in ADL_COPY_CODES:
-            entry = unanswered.get(code)
-            if entry:
-                answer = entry.get("answer")
+            answer = _lookup_gap_answer(gap_answers, code)
+            if answer is not None:
                 items.append({
                     "item_code": code,
                     "value": str(answer) if answer is not None else None,
                     "rationale": (
                         f"Copied verbatim from tap_tap_gap_answers.json (Step 4 assessment). "
-                        f"Question: {entry.get('question', code)}"
+                        f"Question: {code}"
                     ),
                     "confidence": "high",
                     "source": "gap_answers",
                 })
             else:
                 logger.warning(
-                    "Step 6: %s not found in gap_answers unanswered_response — skipping",
+                    "Step 6: %s not found in gap_answers — skipping",
                     code,
                 )
 
@@ -408,6 +415,71 @@ class OasisGoldStandardGenerator:
             pass
         return "(Medication list unavailable)"
 
+    # ── N0415 Multi-Flag Decomposition ────────────────────────────────────────────────────
+
+    _N0415_DRUG_CLASS_MAP: dict[str, str] = {
+        "Anticoagulant": "N0415E",
+        "Insulin": "N0415H",
+        "Opioid": "N0415I",
+        "Digoxin": "N0415F",
+        "Narrow Therapeutic": "N0415F",
+    }
+
+    def _decompose_n0415_from_gap_answers(self, gap_answers: dict) -> list[dict]:
+        """Derive N0415 sub-flag items deterministically from the gap_answers N0415 array.
+
+        PRD Section 7: N0415 must be decomposed into separate sub-flags (E/H/I/F) rather
+        than a single N0415 scalar.  Reads the array of {drug_class, medication, indication}
+        entries from gap_answers and sets each sub-flag to "1" if any matching drug class is
+        present, "0" otherwise.
+
+        Sub-flag mapping:
+          Anticoagulant      → N0415E
+          Insulin            → N0415H
+          Opioid             → N0415I
+          Digoxin / Narrow Therapeutic → N0415F
+
+        Returns:
+            List of 4 item dicts (N0415E, N0415H, N0415I, N0415F) with source="gap_answers".
+        """
+        n0415_answer = _lookup_gap_answer(gap_answers, "N0415")
+
+        # Default all 4 sub-flags to "0"
+        sub_flags: dict[str, str] = {"N0415E": "0", "N0415H": "0", "N0415I": "0", "N0415F": "0"}
+        found_classes: list[str] = []
+
+        if isinstance(n0415_answer, list):
+            for entry in n0415_answer:
+                if not isinstance(entry, dict):
+                    continue
+                drug_class = str(entry.get("drug_class", "")).strip()
+                sub_flag = self._N0415_DRUG_CLASS_MAP.get(drug_class)
+                if sub_flag:
+                    sub_flags[sub_flag] = "1"
+                    found_classes.append(drug_class)
+
+        logger.info(
+            "Step 6: N0415 decomposed — drug classes found: %s → flags: %s",
+            found_classes,
+            sub_flags,
+        )
+
+        items: list[dict] = []
+        drug_class_labels = {v: k for k, v in self._N0415_DRUG_CLASS_MAP.items()}
+        for code, value in sub_flags.items():
+            items.append({
+                "item_code": code,
+                "value": value,
+                "rationale": (
+                    f"Deterministically derived from Step 4 gap_answers N0415 array. "
+                    f"Drug class for {code} ({drug_class_labels.get(code, code)}): "
+                    f"{'present' if value == '1' else 'absent'}."
+                ),
+                "confidence": "high",
+                "source": "gap_answers",
+            })
+        return items
+
     @staticmethod
     def _build_gap_context(gap_answers: dict) -> str:
         """Build a comprehensive Step 4 context block for the LLM prompt.
@@ -418,7 +490,6 @@ class OasisGoldStandardGenerator:
         independently (PRD Step 4 rule: GG goals require clinical judgment and
         are never extractable from referral/scribe).
         """
-        unanswered = gap_answers.get("unanswered_response", {})
         lines: list[str] = []
 
         # ── Top-level scores ───────────────────────────────────────────────────
@@ -426,50 +497,50 @@ class OasisGoldStandardGenerator:
             ("C0500", "BIMS Total (C0500)"),
             ("D0160", "PHQ-9 Total (D0160)"),
         ]:
-            entry = unanswered.get(code)
-            if entry:
-                lines.append(f"{label}: {entry.get('answer', 'N/A')}")
+            val = _lookup_gap_answer(gap_answers, code)
+            if val is not None:
+                lines.append(f"{label}: {val}")
 
         # ── GG0130 Self-Care — expand grouped dict or individual sub-codes ────
-        gg0130_entry = unanswered.get("GG0130")
-        if gg0130_entry and isinstance(gg0130_entry.get("answer"), dict):
+        gg0130_answer = _lookup_gap_answer(gap_answers, "GG0130")
+        if gg0130_answer and isinstance(gg0130_answer, dict):
             # Step 4 stores as a grouped object: {"Eating": "05", "Oral Hygiene": "04", ...}
             lines.append("GG0130 Self-Care (Step 4 grouped answers):")
-            for sub, val in gg0130_entry["answer"].items():
+            for sub, val in gg0130_answer.items():
                 lines.append(f"  GG0130 {sub}: {val}")
         else:
             # Try individual sub-codes (if stored that way)
             for letter in ["A", "B", "C", "D", "E", "F", "G"]:
                 for suffix in ["1", "2"]:
                     code = f"GG0130{letter}{suffix}"
-                    entry = unanswered.get(code)
-                    if entry:
-                        lines.append(f"  {code}: {entry.get('answer', 'N/A')}")
+                    val = _lookup_gap_answer(gap_answers, code)
+                    if val is not None:
+                        lines.append(f"  {code}: {val}")
 
         # ── GG0170 Mobility — expand grouped dict or individual sub-codes ─────
-        gg0170_entry = unanswered.get("GG0170")
-        if gg0170_entry and isinstance(gg0170_entry.get("answer"), dict):
+        gg0170_answer = _lookup_gap_answer(gap_answers, "GG0170")
+        if gg0170_answer and isinstance(gg0170_answer, dict):
             lines.append("GG0170 Mobility (Step 4 grouped answers):")
-            for sub, val in gg0170_entry["answer"].items():
+            for sub, val in gg0170_answer.items():
                 lines.append(f"  GG0170 {sub}: {val}")
         else:
             for letter in ["A", "B", "C", "D", "E", "F", "G", "I", "J", "K", "L", "M", "N", "O", "P"]:
                 for suffix in ["1", "2"]:
                     code = f"GG0170{letter}{suffix}"
-                    entry = unanswered.get(code)
-                    if entry:
-                        lines.append(f"  {code}: {entry.get('answer', 'N/A')}")
+                    val = _lookup_gap_answer(gap_answers, code)
+                    if val is not None:
+                        lines.append(f"  {code}: {val}")
 
         # GG0170C prior function
-        gg0170c = unanswered.get("GG0170C")
-        if gg0170c:
-            lines.append(f"GG0170C prior walking: {gg0170c.get('answer', 'N/A')}")
+        gg0170c = _lookup_gap_answer(gap_answers, "GG0170C")
+        if gg0170c is not None:
+            lines.append(f"GG0170C prior walking: {gg0170c}")
 
         # ── GG0100 Prior Functioning ──────────────────────────────────────────
-        gg0100_entry = unanswered.get("GG0100")
-        if gg0100_entry and isinstance(gg0100_entry.get("answer"), dict):
+        gg0100_answer = _lookup_gap_answer(gap_answers, "GG0100")
+        if gg0100_answer and isinstance(gg0100_answer, dict):
             lines.append("GG0100 Prior Functioning (Step 4):")
-            for sub, val in gg0100_entry["answer"].items():
+            for sub, val in gg0100_answer.items():
                 lines.append(f"  {sub}: {val}")
 
         # ── ADL M-codes from Step 4 ───────────────────────────────────────────
@@ -480,18 +551,18 @@ class OasisGoldStandardGenerator:
         ]
         adl_lines = []
         for code in adl_codes:
-            entry = unanswered.get(code)
-            if entry:
-                adl_lines.append(f"  {code}: {entry.get('answer', 'N/A')}")
+            val = _lookup_gap_answer(gap_answers, code)
+            if val is not None:
+                adl_lines.append(f"  {code}: {val}")
         if adl_lines:
             lines.append("ADL M-codes (Step 4):")
             lines.extend(adl_lines)
 
         # ── Cognitive / Behavioral ────────────────────────────────────────────
         for code in ["M1700", "M1710", "M1720", "M1740", "M1400"]:
-            entry = unanswered.get(code)
-            if entry:
-                lines.append(f"{code}: {entry.get('answer', 'N/A')}")
+            val = _lookup_gap_answer(gap_answers, code)
+            if val is not None:
+                lines.append(f"{code}: {val}")
 
         return "\n".join(lines) if lines else "(No gap assessment context available)"
 

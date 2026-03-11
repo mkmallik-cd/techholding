@@ -2,13 +2,26 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class EnqueuePatientGenerationRequest(BaseModel):
-    patient_external_id: str = Field(default="PATIENT-0001", min_length=3, max_length=100)
+    patient_external_id: str = Field(default="SYN_0001", min_length=3, max_length=100)
     model_id: str | None = Field(default=None, description="Optional Bedrock model id override")
     hardcoded_seed: str = Field(default="default-step1-seed", min_length=3, max_length=100)
+
+    @field_validator("patient_external_id")
+    @classmethod
+    def validate_patient_id_format(cls, v: str) -> str:
+        """Enforce PRD Section 11: patient_external_id must match SYN_XXXX format."""
+        if not re.match(r"^SYN_\d{4}$", v):
+            raise ValueError(
+                f"patient_external_id must match the format SYN_XXXX (e.g. SYN_0001). "
+                f"Got: {v!r}"
+            )
+        return v
 
 
 class EnqueuePatientGenerationResponse(BaseModel):

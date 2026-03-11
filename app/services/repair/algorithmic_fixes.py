@@ -11,9 +11,30 @@ logger = get_logger(__name__)
 
 # ── Gap-answers helpers ────────────────────────────────────────────────────────
 
-def _get_answer(unanswered: dict, code: str):
-    """Return the raw answer value for `code`, or None if absent."""
-    entry = unanswered.get(code)
+
+def _build_code_index(gap_answers: dict) -> dict[str, dict]:
+    """Return a mutable index of {code: question_entry} from any gap_answers format.
+
+    Supports both the new ``sections`` array format (PRD Section 6) and the
+    legacy ``unanswered_response`` flat dict.  The returned dict values are
+    references into the original structure — mutations propagate back.
+    """
+    index: dict[str, dict] = {}
+    # New format: sections array
+    for section in gap_answers.get("sections", []):
+        for question in section.get("questions", []):
+            for code in question.get("field_codes", []):
+                index[code] = question
+    # Legacy format: unanswered_response flat dict
+    for code, entry in gap_answers.get("unanswered_response", {}).items():
+        if isinstance(entry, dict) and code not in index:
+            index[code] = entry
+    return index
+
+
+def _get_answer(index_or_unanswered: dict, code: str):
+    """Return the raw answer value for ``code``, or None if absent."""
+    entry = index_or_unanswered.get(code)
     return entry.get("answer") if isinstance(entry, dict) else None
 
 
@@ -28,7 +49,9 @@ def fix_gap_answers(gap_answers: dict) -> tuple[dict, list[str]]:
     Returns:
         (modified_gap_answers, list_of_fix_descriptions)
     """
-    unanswered: dict = gap_answers.get("unanswered_response", {})
+    # Build a unified {code: entry} index that works for both schema versions.
+    # Mutations to entry["answer"] propagate back to the original structure.
+    unanswered: dict = _build_code_index(gap_answers)
     fixes: list[str] = []
     phq2_gate_fired = False
 
