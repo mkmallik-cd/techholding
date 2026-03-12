@@ -1,6 +1,23 @@
 import json
 from pathlib import Path
 
+_SYNTHETIC_LABEL = "SYNTHETIC — NOT REAL PATIENT DATA"
+_SYNTHETIC_TXT_HEADER = f"# {_SYNTHETIC_LABEL}\n"
+
+
+def _inject_synthetic_label(data: dict) -> dict:
+    """Return a new dict with _synthetic_label as the first key."""
+    if data.get("_synthetic_label") == _SYNTHETIC_LABEL:
+        return data  # already present
+    return {"_synthetic_label": _SYNTHETIC_LABEL, **data}
+
+
+def _prepend_synthetic_header(text: str) -> str:
+    """Prepend the synthetic data warning line to a text file."""
+    if text.startswith(_SYNTHETIC_TXT_HEADER):
+        return text
+    return _SYNTHETIC_TXT_HEADER + text
+
 
 class ArtifactWriter:
     def __init__(self, output_base_dir: str) -> None:
@@ -21,7 +38,7 @@ class ArtifactWriter:
 
         # Write metadata.json directly into the patient directory
         metadata_path = patient_dir / "metadata.json"
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        metadata_path.write_text(json.dumps(_inject_synthetic_label(metadata), indent=2), encoding="utf-8")
 
         return str(patient_dir)
 
@@ -36,9 +53,9 @@ class ArtifactWriter:
         patient_dir = self.output_base_path / patient_external_id
         patient_dir.mkdir(parents=True, exist_ok=True)
 
-        (patient_dir / "referral_packet.txt").write_text(referral_text, encoding="utf-8")
+        (patient_dir / "referral_packet.txt").write_text(_prepend_synthetic_header(referral_text), encoding="utf-8")
         (patient_dir / "medication_list.json").write_text(
-            json.dumps(medication_list, indent=2), encoding="utf-8"
+            json.dumps(_inject_synthetic_label(medication_list), indent=2), encoding="utf-8"
         )
 
         return str(patient_dir)
@@ -53,7 +70,7 @@ class ArtifactWriter:
         patient_dir = self.output_base_path / patient_external_id
         patient_dir.mkdir(parents=True, exist_ok=True)
 
-        (patient_dir / "ambient_scribe.txt").write_text(scribe_text, encoding="utf-8")
+        (patient_dir / "ambient_scribe.txt").write_text(_prepend_synthetic_header(scribe_text), encoding="utf-8")
 
         return str(patient_dir)
 
@@ -68,7 +85,7 @@ class ArtifactWriter:
         patient_dir.mkdir(parents=True, exist_ok=True)
 
         (patient_dir / "tap_tap_gap_answers.json").write_text(
-            json.dumps(gap_answers, indent=2), encoding="utf-8"
+            json.dumps(_inject_synthetic_label(gap_answers), indent=2), encoding="utf-8"
         )
 
         return str(patient_dir)
@@ -84,7 +101,7 @@ class ArtifactWriter:
         patient_dir.mkdir(parents=True, exist_ok=True)
 
         (patient_dir / "oasis_gold_standard.json").write_text(
-            json.dumps(oasis_gold_standard, indent=2), encoding="utf-8"
+            json.dumps(_inject_synthetic_label(oasis_gold_standard), indent=2), encoding="utf-8"
         )
 
         return str(patient_dir)
@@ -100,7 +117,7 @@ class ArtifactWriter:
         patient_dir.mkdir(parents=True, exist_ok=True)
 
         (patient_dir / "validation_report.json").write_text(
-            json.dumps(validation_report, indent=2), encoding="utf-8"
+            json.dumps(_inject_synthetic_label(validation_report), indent=2), encoding="utf-8"
         )
 
         return str(patient_dir)

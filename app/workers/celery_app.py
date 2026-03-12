@@ -1,7 +1,20 @@
 from celery import Celery
+from celery.signals import after_setup_logger, after_setup_task_logger
 from kombu import Exchange, Queue
 
 from app.config.settings import get_settings
+from app.utils.logger import StructuredJSONFormatter
+
+
+def _apply_json_formatter(logger, **_kwargs) -> None:
+    """Replace Celery's default formatter with StructuredJSONFormatter on all handlers."""
+    formatter = StructuredJSONFormatter()
+    for handler in logger.handlers:
+        handler.setFormatter(formatter)
+
+
+after_setup_logger.connect(_apply_json_formatter)
+after_setup_task_logger.connect(_apply_json_formatter)
 from app.config.llm_config import (
     STEP2_QUEUE,
     STEP3_QUEUE,

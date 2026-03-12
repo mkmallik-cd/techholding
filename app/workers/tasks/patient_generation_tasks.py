@@ -1,5 +1,6 @@
-import logging
 from uuid import UUID
+
+from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.config.settings import get_settings
 from app.db.session import SessionLocal
@@ -8,7 +9,7 @@ from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.patient_metadata_generator import PatientMetadataGenerator
 from app.workers.celery_app import _STEP2_QUEUE, celery_app
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @celery_app.task(
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
     retry_kwargs={"max_retries": 3},
 )
 def generate_patient_metadata(self, *, job_id: str) -> None:
+    set_tracking_id(job_id)
     settings = get_settings()
     db = SessionLocal()
     try:
@@ -73,3 +75,4 @@ def generate_patient_metadata(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_tracking_id()

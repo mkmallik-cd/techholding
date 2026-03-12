@@ -1,6 +1,7 @@
-import logging
 from pathlib import Path
 from uuid import UUID
+
+from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.db.session import SessionLocal
 from app.repositories.patient_generation_repository import PatientGenerationRepository
@@ -8,7 +9,7 @@ from app.services.generators.ambient_scribe_generator import AmbientScribeGenera
 from app.services.artifact_writer import ArtifactWriter
 from app.workers.celery_app import celery_app, _STEP4_QUEUE
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @celery_app.task(
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
     retry_kwargs={"max_retries": 3},
 )
 def generate_ambient_scribe(self, *, job_id: str) -> None:
+    set_tracking_id(job_id)
     db = SessionLocal()
     try:
         repo = PatientGenerationRepository(db)
@@ -95,3 +97,4 @@ def generate_ambient_scribe(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_tracking_id()

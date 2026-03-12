@@ -12,7 +12,6 @@ Key behaviours:
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import Any
 
@@ -21,8 +20,9 @@ from langchain_core.messages import HumanMessage
 
 from app.config.llm_config import LLM_TEMPERATURE, MAX_LLM_RETRIES
 from app.config.settings import get_settings
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BedrockClient:

@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 from app.services.repair.algorithmic_fixes import fix_gap_answers, fix_gold_standard
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def repair_gap_answers_artifact(gap_answers_path: str) -> list[str]:
