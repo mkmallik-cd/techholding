@@ -1,6 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
+from app.services.llm.langfuse_tracing import clear_step_context, set_step_context
 from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.db.session import SessionLocal
@@ -34,6 +35,7 @@ def generate_gap_answers(self, *, job_id: str) -> None:
             return
 
         repo.mark_processing(job)
+        set_step_context("step4_gap_answers", job.patient_external_id, job.selected_model)
 
         # result_payload contains Step 1+2+3 metadata and artifact paths
         metadata = job.result_payload or {}
@@ -120,4 +122,5 @@ def generate_gap_answers(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_step_context()
         clear_tracking_id()

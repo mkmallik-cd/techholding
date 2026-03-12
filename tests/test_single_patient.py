@@ -20,6 +20,7 @@ def enqueue(patient_id: str) -> str:
     payload = json.dumps({
         "patient_external_id": patient_id,
         "model_id": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "perform_llm_audit": True,
     }).encode()
     req = urllib.request.Request(
         f"{BASE}/enqueue",

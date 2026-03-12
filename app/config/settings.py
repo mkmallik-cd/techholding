@@ -59,10 +59,22 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     # Default Claude model used when no model_id is supplied in the API request
     default_bedrock_model_id: str = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    # Model used exclusively for the Step 8 LLM cross-document consistency audit.
+    # Set LLM_AUDIT_MODEL_ID in .env to override (must be enabled in your Bedrock account).
+    llm_audit_model_id: str = "us.anthropic.claude-opus-4-6-v1"
 
     # ── Artifact storage ──────────────────────────────────────────────────────
     # Root directory where per-patient output folders are written
     output_base_dir: str = "/app/output"
+
+    # ── Langfuse observability ────────────────────────────────────────────────
+    # Set langfuse_enabled=true and supply keys to enable LLM tracing.
+    # Self-hosted: add the langfuse service in docker-compose.yml and create a
+    # project at http://localhost:3000 to obtain the public/secret keys.
+    langfuse_enabled: bool = False
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "http://localhost:3000"
 
 
 @lru_cache

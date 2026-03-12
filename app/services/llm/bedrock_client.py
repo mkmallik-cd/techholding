@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage
 
 from app.config.llm_config import LLM_TEMPERATURE, MAX_LLM_RETRIES
 from app.config.settings import get_settings
+from app.services.llm.langfuse_tracing import get_langfuse_callback
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -83,11 +84,15 @@ class BedrockClient:
         Raises:
             The last exception from Bedrock if all retry attempts are exhausted.
         """
+        langfuse_handler = get_langfuse_callback()
+        callbacks = {"callbacks": [langfuse_handler]} if langfuse_handler is not None else {}
+
         for attempt in range(retries):
             try:
                 # Invoke the language model with a single human-turn message
                 response = self._get_client(model_id, max_tokens).invoke(
-                    [HumanMessage(content=prompt)]
+                    [HumanMessage(content=prompt)],
+                    config=callbacks,
                 )
                 content = response.content
 
@@ -99,6 +104,8 @@ class BedrockClient:
                     blocks = [b.get("text", "") for b in content if isinstance(b, dict)]
                     text = "".join(blocks)
 
+                if langfuse_handler is not None:
+                    langfuse_handler.flush()
                 return {"text": text, "raw": response.response_metadata}
 
             except Exception as exc:
