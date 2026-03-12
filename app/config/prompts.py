@@ -88,8 +88,17 @@ HIGH-RISK MEDICATIONS to include in the discharge medication list:
 REQUIRED SECTIONS — include ALL of the following. Do not skip any.
 
 1. PATIENT HEADER
-   Generate a synthetic patient: realistic first name + last name, DOB (consistent with age {age_hint}),
-   gender {gender_full}, synthetic 9-digit MRN.
+   Generate a synthetic patient:
+   - Realistic first name + last name
+   - DOB (consistent with age {age_hint})
+   - Gender {gender_full}
+   - Ethnicity (e.g., Hispanic/Latino, Not Hispanic/Latino)
+   - Race (e.g., White, Black, Asian, American Indian)
+   - Preferred Language (e.g., English, Spanish)
+   - Synthetic US-based residential address (Street, City, State, Zip)
+   - Synthetic 11-character Medicare ID (MBI) (e.g., 1EG4-TE5-MK72)
+   - Primary Insurer (e.g., Medicare, BCBS, UnitedHealthcare)
+   - Synthetic 9-digit MRN.
 
 2. REFERRAL DATES
    Generate: Hospital Admit Date, Hospital Discharge Date (2-7 days post-admit),
@@ -98,7 +107,8 @@ REQUIRED SECTIONS — include ALL of the following. Do not skip any.
    Use dates near 2026-03-09 (March 2026).
 
 3. REFERRING PHYSICIAN
-   Generate: Dr. [Firstname Lastname], MD, synthetic 10-digit NPI (starts with 1), specialty.
+   Generate: Dr. [Firstname Lastname], MD. Use an ENTIRELY FICTIONAL name.
+   Synthetic 10-digit NPI (starts with 1). Specialty.
 
 4. PRIMARY DIAGNOSIS
    Full ICD-10 code + description per guidance above.
@@ -159,10 +169,11 @@ LAYER 1 — hospital_discharge_list
 Extract every medication from the DISCHARGE MEDICATION LIST section of the referral above.
 For each medication use this object shape:
   {{
-    "name":        "generic name (capitalised)",
-    "dose":        "e.g. 5 mg",
-    "route":       "oral | subcutaneous | IV | topical | inhaled | other",
-    "frequency":   "e.g. daily | twice daily | every 4-6 hours PRN",
+    "id":           "unique identifier, e.g. MED-001",
+    "name":         "generic name (capitalised)",
+    "dose":         "e.g. 5 mg",
+    "route":        "oral | subcutaneous | IV | topical | inhaled | other",
+    "frequency":    "e.g. daily | twice daily | every 4-6 hours PRN",
     "is_high_risk": true   ← set true for: anticoagulants (warfarin, enoxaparin, heparin, apixaban,
                                            rivaroxaban, dabigatran), insulin, opioids (oxycodone,
                                            morphine, hydromorphone, fentanyl, tramadol), digoxin
@@ -185,12 +196,13 @@ OASIS reconciliation pipeline):
     Add a "note" field: "bottle dose differs from discharge prescription of [Layer1 dose]"
 
 All remaining Layer 1 medications (minus discrepancy 1) appear in patient_pill_bottles
-with their correct dose, route, and frequency.
+with their correct id, dose, route, and frequency.
 
 ─────────────────────────────────────────────────────────────────
 LAYER 3 — patient_reported_otc
 ─────────────────────────────────────────────────────────────────
 Include 2-3 items the patient verbally reports taking.
+Every OTC item must also have a unique "id" (e.g., MED-010).
 Apply EXACTLY these two discrepancies:
 
   DISCREPANCY 3 — otc_not_on_list:
@@ -280,6 +292,8 @@ REQUIRED DOCUMENT HEADER (use EXACT format):
 AMBIENT NURSING ASSESSMENT — START OF CARE
 
 Patient: [copy name from referral], DOB: [copy DOB from referral], MRN: [copy MRN from referral]
+Address: [copy residential address from referral]
+Medicare ID: [copy Medicare MBI from referral]
 Visit Date: [SOC date from referral]   Time: 09:30
 Clinician: [Generated RN name], RN
 Supervising Physician: [copy physician name from referral]
