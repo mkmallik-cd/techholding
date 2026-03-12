@@ -31,6 +31,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # ── Langfuse self-hosted observability ──────────────────────────────────────
+  # One-time setup: create the database before first run:
+  #   docker compose exec postgres psql -U postgres -c "CREATE DATABASE langfuse;"
+  # Then open http://localhost:3000, create a project, and copy the keys to .env.
+  langfuse:
+    image: langfuse/langfuse:2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: changeme-replace-with-a-random-secret
+      SALT: changeme-replace-with-a-random-salt
+      TELEMETRY_ENABLED: "false"
+    profiles:
+      - observability
+
   api:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
@@ -174,6 +194,29 @@ services:
   worker-step6:
     build: .
     command: celery -A app.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=4 -Q patient_generation.step6
+    env_file:
+      - .env
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/patient_generation
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: rpc://
+      CELERY_QUEUE_NAME: patient_generation.step1
+      AWS_REGION: us-east-1
+      DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+      OUTPUT_BASE_DIR: /app/output
+    volumes:
+      - ./:/app
+      - ./output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker-step7:
+    build: .
+    command: celery -A app.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=2 -Q patient_generation.step7
     env_file:
       - .env
     environment:

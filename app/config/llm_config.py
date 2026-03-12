@@ -34,3 +34,11 @@ STEP3_QUEUE: str = "patient_generation.step3"
 STEP4_QUEUE: str = "patient_generation.step4"
 STEP5_QUEUE: str = "patient_generation.step5"
 STEP6_QUEUE: str = "patient_generation.step6"
+STEP7_QUEUE: str = "patient_generation.step7"
+
+# ── LLM Audit (Step 8) ────────────────────────────────────────────────────────
+
+# Audit responses contain structured per-field findings; allow generous token budget.
+AUDIT_MAX_TOKENS: int = 6144
+# Number of OASIS fields per LLM audit batch call.
+AUDIT_BATCH_SIZE: int = 30
