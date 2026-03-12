@@ -27,7 +27,7 @@ STEP 1 — PRD 0D.1 metadata.json spec. The output JSON must contain EXACTLY the
   "gender"              — "M" or "F"
   "comorbidity_count"   — integer >= 0
   "has_ambient_scribe"  — boolean — set true for ~70% of records
-  "has_clinical_note"   — boolean — clinical summary present? set true for ~70%
+  "has_clinical_note"   — boolean — take false for all records
   "f2f_status"          — "present_complete", "present_incomplete", or "missing"
                           (vary: 60% present_complete, 20% present_incomplete, 20% missing)
   "referral_format"     — "clean_emr", "messy_fax", or "minimal"

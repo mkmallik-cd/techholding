@@ -20,7 +20,7 @@ OUTPUT:
             "type": "radio|checkbox|text",
             "field_codes": ["<CODE>"],
             "answer": <value>,
-            "why_gap": "Not determinable from provided source documents"
+            "why_gap": "Requires in-person nurse observation"
           },
           ...
         ]
@@ -171,7 +171,7 @@ def _build_sections(unanswered: dict) -> list[dict]:
                                     "type": _derive_answer_type(specific_code),
                                     "field_codes": [specific_code],
                                     "answer": sub_val,
-                                    "why_gap": "Not determinable from provided source documents",
+                                    "why_gap": "Requires in-person nurse observation",
                                 }
                                 buckets[section_name].append(q_entry)
                             continue
@@ -196,7 +196,7 @@ def _build_sections(unanswered: dict) -> list[dict]:
                     "type": _derive_answer_type(sub_code),
                     "field_codes": [sub_code],
                     "answer": sub_val,
-                    "why_gap": "Not determinable from provided source documents",
+                    "why_gap": "Requires in-person nurse observation",
                 }
                 buckets[section_name].append(q_entry)
             continue # Skip adding the grouped object itself
@@ -249,7 +249,7 @@ def _build_sections(unanswered: dict) -> list[dict]:
             "type": _derive_answer_type(resolved_code),
             "field_codes": [resolved_code],
             "answer": answer,
-            "why_gap": "Not determinable from provided source documents",
+            "why_gap": "Requires in-person nurse observation",
         }
         buckets[section_name].append(question_entry)
 

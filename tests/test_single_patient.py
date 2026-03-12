@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 BASE = "http://localhost:8081/api/v1/patient-generation"
-PATIENT_ID = "PATIENT-E2E-001"
+PATIENT_ID = "SYN_0001"
 MAX_WAIT = 900  # 15 minutes — allow for up to 3 repair cycles
 
 
