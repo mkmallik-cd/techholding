@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - app_internal
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -30,26 +32,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-
-  # ── Langfuse self-hosted observability ──────────────────────────────────────
-  # One-time setup: create the database before first run:
-  #   docker compose exec postgres psql -U postgres -c "CREATE DATABASE langfuse;"
-  # Then open http://localhost:3000, create a project, and copy the keys to .env.
-  langfuse:
-    image: langfuse/langfuse:2
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
-      NEXTAUTH_URL: http://localhost:3000
-      NEXTAUTH_SECRET: changeme-replace-with-a-random-secret
-      SALT: changeme-replace-with-a-random-salt
-      TELEMETRY_ENABLED: "false"
-    profiles:
-      - observability
+    networks:
+      - app_internal
 
   api:
     build: .
@@ -65,11 +49,15 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     ports:
       - "8081:8081"
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,9 +78,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,9 +105,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,9 +132,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,9 +159,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -182,9 +186,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -205,9 +213,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -228,9 +240,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -240,3 +256,8 @@ services:
 volumes:
   postgres_data:
   rabbitmq_data:
+
+networks:
+  app_internal:
+  patient_gen_network:
+    external: true
