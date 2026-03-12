@@ -67,7 +67,7 @@ def validate_consistency(self, *, job_id: str) -> None:
         gap_answers = json.loads(Path(gap_answers_path).read_text(encoding="utf-8"))
         logger.info(
             "Step 7: loaded gold_standard (%d items) and gap_answers for job_id=%s",
-            len(gold_standard.get("items", [])),
+            len([k for k in gold_standard.keys() if not k.startswith("_")]),
             job_id,
         )
 

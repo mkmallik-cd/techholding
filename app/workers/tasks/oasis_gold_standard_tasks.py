@@ -95,7 +95,7 @@ def generate_oasis_gold_standard(self, *, job_id: str) -> None:
         logger.info(
             "Step 6: oasis_gold_standard.json generated for job_id=%s (%d items)",
             job_id,
-            len(oasis_gold_standard.get("items", [])),
+            len([k for k in oasis_gold_standard.keys() if not k.startswith("_")]),
         )
 
         from app.config.settings import get_settings

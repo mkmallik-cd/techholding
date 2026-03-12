@@ -12,16 +12,18 @@ Flow:
 
 OUTPUT SHAPE:
   {
-    "items": [{item_code, value, rationale, confidence, source}, ...],
-    "validation": {bims_verified, bims_score, phq_verified, phq_score,
-                   hip_score, hip_valid, skip_logic_applied},
-    "source_documents": [...],
-    "generated_at": "<ISO8601>"
+    "M1021": "I10",
+    "M1023_1": "E11.9",
+    ...
   }
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
+import logging
+from typing import Any
 
 from app.config.constants import (
     ADL_COPY_CODES,
@@ -31,16 +33,16 @@ from app.config.constants import (
     HIP_CODES,
     OASIS_SECTION_BATCHES,
     PHQ_COPY_CODES,
+    WOUND_ARCHETYPES,
+    WOUND_CODES,
 )
 from app.services.llm.bedrock_client import BedrockClient
 from app.config.prompts import OASIS_GOLD_STANDARD_PROMPT
-from app.utils.json_utils import extract_json_array, repair_truncated_array
+from app.utils.json_utils import extract_json_object, repair_truncated_json
 from app.utils.logger import get_logger
 from app.utils.gap_answers_utils import lookup_gap_answer as _lookup_gap_answer
 
 logger = get_logger(__name__)
-
-
 
 def _item_value(item_map: dict[str, dict], code: str) -> str | None:
     """Safely extract the string value of an item from an item_map."""
@@ -111,9 +113,19 @@ class OasisGoldStandardGenerator:
 
         all_llm_items: list[dict] = []
         for section_name, codes in OASIS_SECTION_BATCHES:
-            logger.info("Step 6: LLM batch %s (%d codes)", section_name, len(codes))
+            # PRD: Clinical archetype based filtering. 
+            # If patient is not wound-bearing, omit wound-specific codes from the batch request.
+            filtered_codes = codes
+            if archetype not in WOUND_ARCHETYPES:
+                filtered_codes = [c for c in codes if c not in WOUND_CODES]
+                
+            if not filtered_codes:
+                logger.info("Step 6: Skipping LLM batch %s (no relevant codes for archetype %s)", section_name, archetype)
+                continue
+
+            logger.info("Step 6: LLM batch %s (%d codes requested)", section_name, len(filtered_codes))
             batch_items = self._run_llm_batch(
-                codes=codes,
+                codes=filtered_codes,
                 section_name=section_name,
                 archetype=archetype,
                 diagnosis_context=diagnosis_context,
@@ -154,17 +166,30 @@ class OasisGoldStandardGenerator:
             validation["hip_valid"],
         )
 
-        source_documents = ["referral_packet.txt", "medication_list.json"]
-        if scribe_text:
-            source_documents.append("ambient_scribe.txt")
-        source_documents.append("tap_tap_gap_answers.json")
-
-        return {
-            "items": final_items,
-            "validation": validation,
-            "source_documents": source_documents,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+        # PRD Section 2.3 format: a flat key-value object mapping every OASIS item code to its correct value.
+        output_dict = {
+            "_synthetic_label": "SYNTHETIC \u2014 NOT REAL PATIENT DATA"
         }
+        
+        # Parent codes that often have specific sub-codes and should be filtered out if null
+        # to keep the JSON strictly terminal.
+        # e.g. M1023 is a parent, M1023_1 is specific.
+        parent_codes = {
+            "K0520", "M1021", "M1023", "M1028", "M1030", "M1033", 
+            "M1060", "M2102", "O0110", "D0150", "C0300", "C0400"
+        }
+
+        for item in final_items:
+            code = item["item_code"]
+            val = item.get("value")
+            
+            # Skip parent codes if they are null or empty (they have sub-codes like M1023_1)
+            if code in parent_codes and (val is None or str(val).strip() == ""):
+                continue
+                
+            output_dict[code] = val
+
+        return output_dict
 
     # ── Private helpers ────────────────────────────────────────────────────────────────────
 
@@ -294,72 +319,58 @@ class OasisGoldStandardGenerator:
         items: list[dict] = []
 
         # ── GG0130 Self-Care X1 (admission performance) ───────────────────────────────────
-        gg0130_answer = _lookup_gap_answer(gap_answers, "GG0130")
-        if gg0130_answer and isinstance(gg0130_answer, dict):
-            gg0130_dict: dict = gg0130_answer
-            for label, letter_or_letters in GG0130_LABEL_TO_LETTER.items():
-                val = gg0130_dict.get(label)
-                if val is not None:
-                    # letter_or_letters may be a single letter or a list (e.g. "Dressing" -> D+E)
-                    letters = (
-                        letter_or_letters
-                        if isinstance(letter_or_letters, list)
-                        else [letter_or_letters]
-                    )
-                    for letter in letters:
-                        code = f"GG0130{letter}1"
-                        items.append({
-                            "item_code": code,
-                            "value": str(val),
-                            "rationale": (
-                                f"Expanded from Step 4 gap answers: "
-                                f"tap_tap_gap_answers.GG0130['{label}'] = {val}.  "
-                                f"(GG0130A1 is not stored directly; derived from the "
-                                f"grouped GG0130 answer dict.)  "
-                                f"PRD: GG admission performance is validated in Step 4."
-                            ),
-                            "confidence": "high",
-                            "source": "gap_answers",
-                        })
-        else:
+        gg0130_letters = set()
+        for letter_or_letters in GG0130_LABEL_TO_LETTER.values():
+            if isinstance(letter_or_letters, list):
+                gg0130_letters.update(letter_or_letters)
+            else:
+                gg0130_letters.add(letter_or_letters)
+
+        gg0130_found = False
+        for letter in sorted(gg0130_letters):
+            code = f"GG0130{letter}1"
+            val = _lookup_gap_answer(gap_answers, code)
+            if val is not None:
+                gg0130_found = True
+                items.append({
+                    "item_code": code,
+                    "value": str(val),
+                    "rationale": (
+                        f"Copied verbatim from tap_tap_gap_answers.json (Step 4 assessment). "
+                        f"PRD: GG admission performance is validated in Step 4."
+                    ),
+                    "confidence": "high",
+                    "source": "gap_answers",
+                })
+        
+        if not gg0130_found:
             logger.warning(
-                "Step 6: GG0130 grouped dict not found in gap_answers — "
+                "Step 6: No GG0130 codes found in gap_answers — "
                 "GG0130 X1 codes will fall through to LLM"
             )
 
         # ── GG0170 Mobility X1 (admission performance) ────────────────────────────────────
-        gg0170_answer = _lookup_gap_answer(gap_answers, "GG0170")
-        if gg0170_answer and isinstance(gg0170_answer, dict):
-            gg0170_dict: dict = gg0170_answer
-            # Track which letters have been written to avoid duplicate items when
-            # multiple snake_case keys map to the same letter (e.g. roll_left / roll_right).
-            seen_letters: set[str] = set()
-            for key, val in gg0170_dict.items():
-                letter = GG0170_KEY_TO_LETTER.get(key)
-                if letter is None:
-                    logger.warning("Step 6: unknown GG0170 key %r — skipping", key)
-                    continue
-                if letter in seen_letters:
-                    continue
-                seen_letters.add(letter)
-                if val is not None:
-                    code = f"GG0170{letter}1"
-                    items.append({
-                        "item_code": code,
-                        "value": str(val),
-                        "rationale": (
-                            f"Expanded from Step 4 gap answers: "
-                            f"tap_tap_gap_answers.GG0170['{key}'] = {val}.  "
-                            f"(GG0170{letter}1 is not stored directly; derived from "
-                            f"the grouped GG0170 answer dict.)  "
-                            f"PRD: GG admission performance is validated in Step 4."
-                        ),
-                        "confidence": "high",
-                        "source": "gap_answers",
-                    })
-        else:
+        gg0170_letters = set(GG0170_KEY_TO_LETTER.values())
+        gg0170_found = False
+        for letter in sorted(gg0170_letters):
+            code = f"GG0170{letter}1"
+            val = _lookup_gap_answer(gap_answers, code)
+            if val is not None:
+                gg0170_found = True
+                items.append({
+                    "item_code": code,
+                    "value": str(val),
+                    "rationale": (
+                        f"Copied verbatim from tap_tap_gap_answers.json (Step 4 assessment). "
+                        f"PRD: GG admission performance is validated in Step 4."
+                    ),
+                    "confidence": "high",
+                    "source": "gap_answers",
+                })
+
+        if not gg0170_found:
             logger.warning(
-                "Step 6: GG0170 grouped dict not found in gap_answers — "
+                "Step 6: No GG0170 codes found in gap_answers — "
                 "GG0170 X1 codes will fall through to LLM"
             )
 
@@ -542,6 +553,12 @@ class OasisGoldStandardGenerator:
             lines.append("GG0100 Prior Functioning (Step 4):")
             for sub, val in gg0100_answer.items():
                 lines.append(f"  {sub}: {val}")
+        else:
+            for letter in ["A", "B", "C", "D"]:
+                code = f"GG0100{letter}"
+                val = _lookup_gap_answer(gap_answers, code)
+                if val is not None:
+                    lines.append(f"  {code}: {val}")
 
         # ── ADL M-codes from Step 4 ───────────────────────────────────────────
         adl_codes = [
@@ -616,21 +633,50 @@ class OasisGoldStandardGenerator:
         text = response["text"].strip()
 
         try:
-            raw = json.loads(extract_json_array(text))
+            raw = json.loads(extract_json_object(text))
         except Exception as exc:
             logger.error(
                 "Step 6 batch %s JSON parse failed (%s) — attempting repair",
                 section_name,
                 exc,
             )
-            raw = repair_truncated_array(text)
+            raw = repair_truncated_json(text)
+
+        def _flatten_data(d: Any, prefix: str = "") -> dict[str, str]:
+            flat_dict = {}
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    flat_dict.update(_flatten_data(v, prefix + k))
+            elif isinstance(d, list):
+                for i, item in enumerate(d):
+                    flat_dict.update(_flatten_data(item, f"{prefix}_{i+1}"))
+            else:
+                if d is not None and str(d).strip() != "":
+                    flat_dict[prefix] = str(d)
+            return flat_dict
 
         if not isinstance(raw, list):
             logger.warning("Step 6 batch %s: LLM returned non-array — wrapping", section_name)
-            if isinstance(raw, dict):
-                raw = [{"item_code": k, **v} for k, v in raw.items()]
-            else:
-                raw = []
+        if isinstance(raw, dict):
+            # Flatten any nested structures into flat standard key-value map
+            flat_raw = _flatten_data(raw)
+            # Re-map to the list of dictionaries that the rest of the function evaluates
+            raw_list = [{"item_code": k, "value": v} for k, v in flat_raw.items()]
+        elif isinstance(raw, list):
+            # Fallback if LLM inexplicably returned a list
+            raw_list = []
+            for item in raw:
+                if isinstance(item, dict) and "item_code" in item and "value" in item:
+                    raw_list.append(item)
+                else:
+                    flat_item = _flatten_data(item)
+                    for k, v in flat_item.items():
+                        raw_list.append({"item_code": k, "value": v})
+        else:
+            raw_list = []
+            logger.warning("Step 6 batch %s: LLM returned unexpected structure.", section_name)
+
+        raw = raw_list
 
         seen_codes: set[str] = set()
         batch_items: list[dict] = []
@@ -644,9 +690,6 @@ class OasisGoldStandardGenerator:
             batch_items.append({
                 "item_code": code,
                 "value": entry.get("value"),
-                "rationale": str(entry.get("rationale") or ""),
-                "confidence": str(entry.get("confidence") or "medium"),
-                "source": "llm",
             })
 
         # Fill in placeholder items for any codes not returned by the LLM.

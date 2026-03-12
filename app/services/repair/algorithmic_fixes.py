@@ -158,8 +158,8 @@ def fix_gold_standard(
     Returns:
         (modified_gold_standard, list_of_fix_descriptions)
     """
-    items_list: list[dict] = gold_standard.get("items", [])
-    by_code: dict[str, dict] = {entry["item_code"]: entry for entry in items_list}
+    # Wrap the flat dict values in an item dict to reuse the existing logic
+    by_code: dict[str, dict] = {code: {"item_code": code, "value": value} for code, value in gold_standard.items() if not code.startswith("_")}
     fixes: list[str] = []
 
     # Group errors by check type
@@ -200,6 +200,10 @@ def fix_gold_standard(
         fixes.extend(
             _fix_date_ordering_in_gold(by_code, errors_by_check["date_ordering"])
         )
+
+    # Write the modified values back to the flat dict
+    for code, item in by_code.items():
+        gold_standard[code] = item.get("value")
 
     return gold_standard, fixes
 

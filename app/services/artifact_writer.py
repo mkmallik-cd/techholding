@@ -40,13 +40,6 @@ class ArtifactWriter:
         metadata_path = patient_dir / "metadata.json"
         metadata_path.write_text(json.dumps(_inject_synthetic_label(metadata), indent=2), encoding="utf-8")
 
-        # Create docs/placeholders directory and a stub referral summary
-        placeholders_dir = patient_dir / "docs" / "placeholders"
-        placeholders_dir.mkdir(parents=True, exist_ok=True)
-        (placeholders_dir / "referral_summary.txt").write_text(
-            _prepend_synthetic_header(""), encoding="utf-8"
-        )
-
         return str(patient_dir)
 
     def write_step2_artifacts(
