@@ -121,3 +121,19 @@ class ArtifactWriter:
         )
 
         return str(patient_dir)
+
+    def write_llm_audit_artifacts(
+        self,
+        *,
+        patient_external_id: str,
+        audit_report: dict,
+    ) -> str:
+        """Write llm_audit_report.json (Step 8 — LLM cross-document consistency audit)."""
+        patient_dir = self.output_base_path / patient_external_id
+        patient_dir.mkdir(parents=True, exist_ok=True)
+
+        (patient_dir / "llm_audit_report.json").write_text(
+            json.dumps(_inject_synthetic_label(audit_report), indent=2), encoding="utf-8"
+        )
+
+        return str(patient_dir)

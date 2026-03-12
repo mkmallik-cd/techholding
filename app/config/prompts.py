@@ -665,3 +665,85 @@ RULES:
 }}
 """
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 8 — LLM Cross-Document Consistency Audit
+# ─────────────────────────────────────────────────────────────────────────────
+# Placeholders: {fields_batch_json}, {referral_text}, {ambient_scribe_text},
+#               {medication_list_json}, {gap_answers_json}
+
+LLM_AUDIT_PROMPT_TEMPLATE = """\
+You are a clinical data auditor reviewing synthetic home-health patient records.
+Your task is to perform a cross-document consistency audit for a batch of OASIS-E1 fields.
+
+For EACH field in the batch:
+1. Search ALL provided source documents for any mention of or evidence related to that field.
+2. Identify what value each document supports (or note if it is silent about the field).
+3. Flag a CONFLICT if two or more documents imply DIFFERENT values for the same field.
+4. Write a concise explanation of why the recorded OASIS value is the correct clinical pick.
+
+Return ONLY a valid JSON array — no markdown fences, no commentary, no trailing text.
+Each element must have EXACTLY these keys:
+  "field_code"        — the OASIS field code (string, uppercase)
+  "oasis_value"       — the value recorded in oasis_gold_standard (string or null)
+  "sources_found"     — array of objects, one per document that has evidence for this field:
+                          "document"       — one of: "referral_packet", "ambient_scribe",
+                                             "medication_list", "gap_answers"
+                          "excerpt"        — verbatim or paraphrased excerpt (max 120 chars)
+                          "value_supported"— implied value from this document (string or null)
+                          "consistent"     — true if value_supported matches oasis_value
+  "conflict_detected" — true if ANY source_found entry has consistent=false
+  "value_reasoning"   — 1-2 sentence explanation of why oasis_value is the correct pick
+
+If a document has no relevant evidence for a field, omit it from sources_found entirely.
+If no documents mention a field at all, set sources_found to [] and explain in value_reasoning.
+
+OASIS FIELDS TO AUDIT (JSON object — field_code → oasis_value):
+{fields_batch_json}
+
+\u2500\u2500\u2500 SOURCE DOCUMENTS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+REFERRAL PACKET (referral_packet.txt):
+{referral_text}
+
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+AMBIENT SCRIBE NOTE (ambient_scribe.txt \u2014 empty string if not generated for this patient):
+{ambient_scribe_text}
+
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+MEDICATION LIST (medication_list.json \u2014 condensed):
+{medication_list_json}
+
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+GAP ANSWERS / TAP-TAP FORM (tap_tap_gap_answers.json \u2014 condensed field_code \u2192 answer map):
+{gap_answers_json}
+
+\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+OUTPUT \u2014 return a JSON array only, example structure:
+[
+  {{
+    "field_code": "M1700",
+    "oasis_value": "0",
+    "sources_found": [
+      {{
+        "document": "ambient_scribe",
+        "excerpt": "Alert and oriented x3, follows commands appropriately",
+        "value_supported": "0",
+        "consistent": true
+      }},
+      {{
+        "document": "gap_answers",
+        "excerpt": "M1700 answer: 0",
+        "value_supported": "0",
+        "consistent": true
+      }}
+    ],
+    "conflict_detected": false,
+    "value_reasoning": "Ambient scribe documents A&Ox3 with no confusion episodes; M1700=0 (intact cognition) is fully consistent across all sources."
+  }}
+]
+"""
+

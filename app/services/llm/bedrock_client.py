@@ -12,6 +12,7 @@ Key behaviours:
 
 from __future__ import annotations
 
+import datetime
 import time
 from typing import Any
 
@@ -20,6 +21,7 @@ from langchain_core.messages import HumanMessage
 
 from app.config.llm_config import LLM_TEMPERATURE, MAX_LLM_RETRIES
 from app.config.settings import get_settings
+from app.services.llm.langfuse_tracing import record_generation
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -85,9 +87,11 @@ class BedrockClient:
         """
         for attempt in range(retries):
             try:
+                # Capture start time for Langfuse latency tracking
+                start_time = datetime.datetime.now(datetime.timezone.utc)
                 # Invoke the language model with a single human-turn message
                 response = self._get_client(model_id, max_tokens).invoke(
-                    [HumanMessage(content=prompt)]
+                    [HumanMessage(content=prompt)],
                 )
                 content = response.content
 
@@ -99,6 +103,14 @@ class BedrockClient:
                     blocks = [b.get("text", "") for b in content if isinstance(b, dict)]
                     text = "".join(blocks)
 
+                record_generation(
+                    prompt=prompt,
+                    model_id=model_id,
+                    output=text,
+                    usage_metadata=response.usage_metadata,
+                    max_tokens=max_tokens,
+                    start_time=start_time,
+                )
                 return {"text": text, "raw": response.response_metadata}
 
             except Exception as exc:

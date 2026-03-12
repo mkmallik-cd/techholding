@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - app_internal
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -30,6 +32,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - app_internal
 
   api:
     build: .
@@ -45,11 +49,15 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     ports:
       - "8081:8081"
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,9 +78,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,9 +105,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,9 +132,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,9 +159,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -162,9 +186,13 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -185,9 +213,40 @@ services:
       AWS_REGION: us-east-1
       DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
       OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       - ./:/app
       - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker-step7:
+    build: .
+    command: celery -A app.workers.celery_app:celery_app worker --loglevel=INFO --concurrency=2 -Q patient_generation.step7
+    env_file:
+      - .env
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/patient_generation
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: rpc://
+      CELERY_QUEUE_NAME: patient_generation.step1
+      AWS_REGION: us-east-1
+      DEFAULT_BEDROCK_MODEL_ID: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+      OUTPUT_BASE_DIR: /app/output
+      LANGFUSE_HOST: http://langfuse:3000
+    volumes:
+      - ./:/app
+      - ./output:/app/output
+    networks:
+      - app_internal
+      - patient_gen_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -197,3 +256,8 @@ services:
 volumes:
   postgres_data:
   rabbitmq_data:
+
+networks:
+  app_internal:
+  patient_gen_network:
+    external: true

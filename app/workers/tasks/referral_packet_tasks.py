@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.services.llm.langfuse_tracing import clear_step_context, set_step_context
 from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.db.session import SessionLocal
@@ -31,6 +32,7 @@ def generate_referral_packet(self, *, job_id: str) -> None:
             return
 
         repo.mark_processing(job)
+        set_step_context("step2_referral_packet", job.patient_external_id, job.selected_model)
 
         # Step 1 metadata is persisted in result_payload by advance_to_next_step
         metadata = job.result_payload or {}
@@ -119,4 +121,5 @@ def generate_referral_packet(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_step_context()
         clear_tracking_id()
