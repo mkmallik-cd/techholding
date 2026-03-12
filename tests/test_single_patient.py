@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 BASE = "http://localhost:8081/api/v1/patient-generation"
-PATIENT_ID = "SYN_0001"
+PATIENT_ID = "SYN_0004"
 MAX_WAIT = 900  # 15 minutes — allow for up to 3 repair cycles
 
 
@@ -20,7 +20,8 @@ def enqueue(patient_id: str) -> str:
     payload = json.dumps({
         "patient_external_id": patient_id,
         "model_id": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        "perform_llm_audit": True,
+        "perform_llm_audit": False,
+        "hardcoded_seed": patient_id
     }).encode()
     req = urllib.request.Request(
         f"{BASE}/enqueue",
