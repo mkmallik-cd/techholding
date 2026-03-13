@@ -9,6 +9,7 @@ from app.repositories.patient_generation_repository import PatientGenerationRepo
 from app.services.generators.ambient_scribe_generator import AmbientScribeGenerator
 from app.services.artifact_writer import ArtifactWriter
 from app.workers.celery_app import celery_app, _STEP4_QUEUE
+from app.workers.tasks.llm_audit_tasks import _extract_audit_context, _format_audit_conflicts
 
 logger = get_logger(__name__)
 
@@ -21,7 +22,7 @@ logger = get_logger(__name__)
     retry_jitter=True,
     retry_kwargs={"max_retries": 3},
 )
-def generate_ambient_scribe(self, *, job_id: str) -> None:
+def generate_ambient_scribe(self, *, job_id: str, is_audit_fix: bool = False) -> None:
     set_tracking_id(job_id)
     db = SessionLocal()
     try:
@@ -47,12 +48,47 @@ def generate_ambient_scribe(self, *, job_id: str) -> None:
         referral_text = Path(referral_packet_path).read_text(encoding="utf-8")
         logger.info("Step 3: loaded referral_packet.txt from %s", referral_packet_path)
 
-        scribe_gen = AmbientScribeGenerator()
-        scribe_text = scribe_gen.generate(
-            referral_text=referral_text,
-            metadata=metadata,
-            model_id=job.selected_model,
+        audit_context = (
+            _extract_audit_context(metadata["llm_audit_report_path"])
+            if metadata.get("llm_audit_report_path")
+            else None
         )
+
+        scribe_gen = AmbientScribeGenerator()
+        if is_audit_fix and metadata.get("llm_audit_report_path") and metadata.get("ambient_scribe_path"):
+            # Fix mode: load all existing documents and use the targeted revision prompt.
+            import json as _json
+            from pathlib import Path as _Path
+            existing_ambient_scribe = _Path(metadata["ambient_scribe_path"]).read_text(encoding="utf-8")
+            medication_list_json = _json.dumps(
+                _json.loads(_Path(metadata["medication_list_path"]).read_text(encoding="utf-8"))
+                if metadata.get("medication_list_path") else {}, indent=2
+            )
+            gap_answers_json = _json.dumps(
+                _json.loads(_Path(metadata["gap_answers_path"]).read_text(encoding="utf-8"))
+                if metadata.get("gap_answers_path") else {}, indent=2
+            )
+            oasis_gold_standard_json = _json.dumps(
+                _json.loads(_Path(metadata["oasis_gold_standard_path"]).read_text(encoding="utf-8"))
+                if metadata.get("oasis_gold_standard_path") else {}, indent=2
+            )
+            audit_conflicts_text = _format_audit_conflicts(metadata["llm_audit_report_path"])
+            scribe_text = scribe_gen.generate_fix(
+                referral_text=referral_text,
+                current_ambient_scribe_text=existing_ambient_scribe,
+                medication_list_json=medication_list_json,
+                gap_answers_json=gap_answers_json,
+                oasis_gold_standard_json=oasis_gold_standard_json,
+                audit_conflicts_text=audit_conflicts_text,
+                model_id=job.selected_model,
+            )
+        else:
+            scribe_text = scribe_gen.generate(
+                referral_text=referral_text,
+                metadata=metadata,
+                model_id=job.selected_model,
+                audit_context=audit_context,
+            )
         logger.info("Step 3: ambient_scribe.txt generated for job_id=%s", job_id)
 
         from app.config.settings import get_settings
@@ -77,7 +113,7 @@ def generate_ambient_scribe(self, *, job_id: str) -> None:
         )
         from app.workers.tasks.gap_answers_tasks import generate_gap_answers
         generate_gap_answers.apply_async(
-            kwargs={"job_id": job_id},
+            kwargs={"job_id": job_id, "is_audit_fix": is_audit_fix},
             queue=_STEP4_QUEUE,
             routing_key=_STEP4_QUEUE,
         )

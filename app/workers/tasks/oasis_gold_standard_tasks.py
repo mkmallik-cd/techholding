@@ -10,6 +10,7 @@ from app.repositories.patient_generation_repository import PatientGenerationRepo
 from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.oasis_gold_standard_generator import OasisGoldStandardGenerator
 from app.workers.celery_app import celery_app, _STEP6_QUEUE
+from app.workers.tasks.llm_audit_tasks import _extract_audit_context, _format_audit_conflicts
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ logger = get_logger(__name__)
     time_limit=900,
     soft_time_limit=780,
 )
-def generate_oasis_gold_standard(self, *, job_id: str) -> None:
+def generate_oasis_gold_standard(self, *, job_id: str, is_audit_fix: bool = False) -> None:
     set_tracking_id(job_id)
     db = SessionLocal()
     try:
@@ -85,15 +86,41 @@ def generate_oasis_gold_standard(self, *, job_id: str) -> None:
                     ambient_scribe_path,
                 )
 
-        generator = OasisGoldStandardGenerator()
-        oasis_gold_standard = generator.generate(
-            referral_text=referral_text,
-            medication_list=medication_list,
-            scribe_text=scribe_text,
-            gap_answers=gap_answers,
-            metadata=metadata,
-            model_id=job.selected_model,
+        audit_context = (
+            _extract_audit_context(metadata["llm_audit_report_path"])
+            if metadata.get("llm_audit_report_path")
+            else None
         )
+
+        generator = OasisGoldStandardGenerator()
+        if is_audit_fix and metadata.get("llm_audit_report_path") and metadata.get("oasis_gold_standard_path"):
+            # Fix mode: load all existing documents and use the targeted revision prompt.
+            import json as _json
+            from pathlib import Path as _Path
+            existing_oasis = _Path(metadata["oasis_gold_standard_path"]).read_text(encoding="utf-8")
+            medication_list_json = _json.dumps(medication_list, indent=2)
+            ambient_scribe_text_str = scribe_text or "(no ambient scribe generated)"
+            gap_answers_json = _json.dumps(gap_answers, indent=2)
+            audit_conflicts_text = _format_audit_conflicts(metadata["llm_audit_report_path"])
+            oasis_gold_standard = generator.generate_fix(
+                referral_text=referral_text,
+                ambient_scribe_text=ambient_scribe_text_str,
+                medication_list_json=medication_list_json,
+                gap_answers_json=gap_answers_json,
+                current_oasis_gold_standard_json=existing_oasis,
+                audit_conflicts_text=audit_conflicts_text,
+                model_id=job.selected_model,
+            )
+        else:
+            oasis_gold_standard = generator.generate(
+                referral_text=referral_text,
+                medication_list=medication_list,
+                scribe_text=scribe_text,
+                gap_answers=gap_answers,
+                metadata=metadata,
+                model_id=job.selected_model,
+                audit_context=audit_context,
+            )
         logger.info(
             "Step 6: oasis_gold_standard.json generated for job_id=%s (%d items)",
             job_id,

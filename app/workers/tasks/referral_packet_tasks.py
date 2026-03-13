@@ -9,6 +9,7 @@ from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.medication_list_generator import MedicationListGenerator
 from app.services.generators.referral_packet_generator import ReferralPacketGenerator
 from app.workers.celery_app import celery_app, _STEP3_QUEUE, _STEP4_QUEUE
+from app.workers.tasks.llm_audit_tasks import _extract_audit_context, _format_audit_conflicts
 
 logger = get_logger(__name__)
 
@@ -21,7 +22,7 @@ logger = get_logger(__name__)
     retry_jitter=True,
     retry_kwargs={"max_retries": 3},
 )
-def generate_referral_packet(self, *, job_id: str) -> None:
+def generate_referral_packet(self, *, job_id: str, is_audit_fix: bool = False) -> None:
     set_tracking_id(job_id)
     db = SessionLocal()
     try:
@@ -39,11 +40,50 @@ def generate_referral_packet(self, *, job_id: str) -> None:
         if not metadata:
             raise ValueError("result_payload is empty — Step 1 metadata not found for job %s" % job_id)
 
-        referral_gen = ReferralPacketGenerator()
-        referral_text = referral_gen.generate(
-            metadata=metadata,
-            model_id=job.selected_model,
+        audit_context = (
+            _extract_audit_context(metadata["llm_audit_report_path"])
+            if metadata.get("llm_audit_report_path")
+            else None
         )
+
+        referral_gen = ReferralPacketGenerator()
+        if is_audit_fix and metadata.get("llm_audit_report_path") and metadata.get("referral_packet_path"):
+            # Fix mode: load all existing documents and use the targeted revision prompt.
+            import json as _json
+            from pathlib import Path as _Path
+            existing_referral = _Path(metadata["referral_packet_path"]).read_text(encoding="utf-8")
+            medication_list_json = _json.dumps(
+                _json.loads(_Path(metadata["medication_list_path"]).read_text(encoding="utf-8"))
+                if metadata.get("medication_list_path") else {}, indent=2
+            )
+            ambient_scribe_text = (
+                _Path(metadata["ambient_scribe_path"]).read_text(encoding="utf-8")
+                if metadata.get("ambient_scribe_path") else "(no ambient scribe generated)"
+            )
+            gap_answers_json = _json.dumps(
+                _json.loads(_Path(metadata["gap_answers_path"]).read_text(encoding="utf-8"))
+                if metadata.get("gap_answers_path") else {}, indent=2
+            )
+            oasis_gold_standard_json = _json.dumps(
+                _json.loads(_Path(metadata["oasis_gold_standard_path"]).read_text(encoding="utf-8"))
+                if metadata.get("oasis_gold_standard_path") else {}, indent=2
+            )
+            audit_conflicts_text = _format_audit_conflicts(metadata["llm_audit_report_path"])
+            referral_text = referral_gen.generate_fix(
+                current_referral_text=existing_referral,
+                medication_list_json=medication_list_json,
+                ambient_scribe_text=ambient_scribe_text,
+                gap_answers_json=gap_answers_json,
+                oasis_gold_standard_json=oasis_gold_standard_json,
+                audit_conflicts_text=audit_conflicts_text,
+                model_id=job.selected_model,
+            )
+        else:
+            referral_text = referral_gen.generate(
+                metadata=metadata,
+                model_id=job.selected_model,
+                audit_context=audit_context,
+            )
         logger.info("Step 2: referral_packet.txt generated for job_id=%s", job_id)
 
         med_gen = MedicationListGenerator()
@@ -80,7 +120,7 @@ def generate_referral_packet(self, *, job_id: str) -> None:
             )
             from app.workers.tasks.ambient_scribe_tasks import generate_ambient_scribe
             generate_ambient_scribe.apply_async(
-                kwargs={"job_id": job_id},
+                kwargs={"job_id": job_id, "is_audit_fix": is_audit_fix},
                 queue=_STEP3_QUEUE,
                 routing_key=_STEP3_QUEUE,
             )
@@ -99,7 +139,7 @@ def generate_referral_packet(self, *, job_id: str) -> None:
             )
             from app.workers.tasks.gap_answers_tasks import generate_gap_answers
             generate_gap_answers.apply_async(
-                kwargs={"job_id": job_id},
+                kwargs={"job_id": job_id, "is_audit_fix": is_audit_fix},
                 queue=_STEP4_QUEUE,
                 routing_key=_STEP4_QUEUE,
             )

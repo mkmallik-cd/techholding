@@ -28,12 +28,15 @@ class ReferralPacketGenerator:
         # Shared Bedrock client with per-model caching
         self.bedrock = BedrockClient()
 
-    def generate(self, *, metadata: dict, model_id: str) -> str:
+    def generate(self, *, metadata: dict, model_id: str, audit_context: str | None = None) -> str:
         """Generate a plain-text referral_packet.txt from Step 1 metadata.
 
         Args:
             metadata: Serialised :class:`GeneratedPatientMetadata` dict (Step 1 output).
             model_id: Bedrock model ARN / short-name to use.
+            audit_context: Optional conflict summary from a previous LLM audit run.
+                           When provided, it is appended to the prompt so the model
+                           can address known inconsistencies in the regenerated document.
 
         Returns:
             The raw referral text string (written to disk by artifact_writer).
@@ -101,6 +104,9 @@ class ReferralPacketGenerator:
             f2f_instruction=f2f_instruction,
         )
 
+        if audit_context:
+            prompt += f"\n\n{audit_context}"
+
         response = self.bedrock.invoke_json(
             prompt=prompt,
             model_id=model_id,
@@ -150,3 +156,37 @@ class ReferralPacketGenerator:
             raise ValueError("Generated referral contains no valid ICD-10 code pattern")
         if len(text) < 200:
             raise ValueError(f"Generated referral is too short ({len(text)} chars) — likely incomplete")
+
+    def generate_fix(
+        self,
+        *,
+        current_referral_text: str,
+        medication_list_json: str,
+        ambient_scribe_text: str,
+        gap_answers_json: str,
+        oasis_gold_standard_json: str,
+        audit_conflicts_text: str,
+        model_id: str,
+    ) -> str:
+        """Produce a revised referral_packet.txt that resolves LLM audit conflicts.
+
+        Uses the targeted REFERRAL_PACKET_FIX_PROMPT which shows all existing
+        documents + the audit conflict summary and asks for a minimal revision.
+        """
+        from app.config.prompts import REFERRAL_PACKET_FIX_PROMPT
+        prompt = REFERRAL_PACKET_FIX_PROMPT.format(
+            current_referral_text=current_referral_text,
+            medication_list_json=medication_list_json[:3000],
+            ambient_scribe_text=ambient_scribe_text[:4000],
+            gap_answers_json=gap_answers_json[:3000],
+            oasis_gold_standard_json=oasis_gold_standard_json[:3000],
+            audit_conflicts_text=audit_conflicts_text,
+        )
+        response = self.bedrock.invoke_json(
+            prompt=prompt,
+            model_id=model_id,
+            max_tokens=4096,
+        )
+        text = response["text"].strip()
+        self._validate(text)
+        return text

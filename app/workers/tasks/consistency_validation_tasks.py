@@ -20,7 +20,7 @@ from app.db.session import SessionLocal
 from app.repositories.patient_generation_repository import PatientGenerationRepository
 from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.consistency_validator import ConsistencyValidator
-from app.workers.celery_app import _STEP4_QUEUE, _STEP6_QUEUE, celery_app
+from app.workers.celery_app import _STEP6_QUEUE, celery_app
 
 logger = get_logger(__name__)
 
@@ -146,45 +146,14 @@ def validate_consistency(self, *, job_id: str) -> None:
                     job.patient_external_id,
                 )
         else:
-            _MAX_REPAIR_ATTEMPTS = 3
-            if (job.repair_attempt or 0) < _MAX_REPAIR_ATTEMPTS:
-                repo.increment_repair_attempt(job)
-                repair_attempt_num = job.repair_attempt
-                repo.advance_to_next_step(
-                    job,
-                    next_phase="repair_gap_answers",
-                    step_result_payload={
-                        **metadata,
-                        "validation_errors": result.errors,
-                        "validation_report_path": artifact_path + "/validation_report.json",
-                    },
-                    step_artifact_path=artifact_path,
-                )
-                logger.warning(
-                    "Step 7 INVALID (attempt %d/%d): job_id=%s patient=%s errors=%d"
-                    " — queuing repair chain",
-                    repair_attempt_num,
-                    _MAX_REPAIR_ATTEMPTS,
-                    job_id,
-                    job.patient_external_id,
-                    len(result.errors),
-                )
-                from app.workers.tasks.repair_tasks import repair_gap_answers
-                repair_gap_answers.apply_async(
-                    kwargs={"job_id": job_id},
-                    queue=_STEP4_QUEUE,
-                    routing_key=_STEP4_QUEUE,
-                )
-            else:
-                repo.mark_invalid_permanent(job, validation_errors=result.errors)
-                logger.error(
-                    "Step 7 permanently INVALID (all %d repair attempts exhausted):"
-                    " job_id=%s patient=%s errors=%d",
-                    _MAX_REPAIR_ATTEMPTS,
-                    job_id,
-                    job.patient_external_id,
-                    len(result.errors),
-                )
+            repo.mark_invalid_permanent(job, validation_errors=result.errors)
+            logger.error(
+                "Step 7 INVALID — marking permanently invalid:"
+                " job_id=%s patient=%s errors=%d",
+                job_id,
+                job.patient_external_id,
+                len(result.errors),
+            )
 
     except Exception as exc:
         logger.error("Step 7 task failed: job_id=%s error=%s", job_id, exc, exc_info=True)

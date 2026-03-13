@@ -3,18 +3,21 @@
 Cross-checks the five generated documents for clinical contradictions.
 All checks are deterministic; no LLM calls are made.
 
-Checks performed:
+Checks performed (pseudocode-aligned):
   1. GG consistency      — GG0130/GG0170 X1 (admission) codes match gap_answers
-  2. BIMS arithmetic     — C0500 == sum(C0200 + C0300A-C + C0400A-C)
-  3. PHQ arithmetic      — D0160 == sum of D0150X2 where D0150X1 != "0"
-  4. PHQ-2 gate          — if D0150A1 + D0150B1 < 3, downstream items must be null
-  5. Date ordering       — M1005 <= M0104 <= M0110 <= M0080
-  6. Skip-logic          — M1306=0 => M1311-M1314 null; M1740=7 => no other flags set
-  7. Wound presence      — if M1306 non-zero, M1311 must be non-zero and wound data in gap_answers
-  8. N0415 flags         — each high-risk drug class in gap_answers has correct sub-flag in gold standard
+                           (supports both direct sub-code and legacy title-based lookup)
+  2. BIMS arithmetic     — C0500 == C0200 + C0300 + C0400 (gold standard self-consistency)
+  3. BIMS cross-reference— BIMS sub-codes in gold standard match gap_answers values
+  4. PHQ arithmetic      — D0160 == sum of D0150X2 where D0150X1 != "0"
+  5. PHQ-2 gate          — if D0150A1 + D0150B1 < 3, downstream items C-I must be null
+  6. Date ordering       — M1005 <= M0104 <= M0110 <= M0080
+  7. Skip-logic          — M1306=0 => M1311-M1314 null; M1740=7 => no other flags set
+  8. Wound presence      — if M1306 non-zero, M1311 must be non-zero and wound data in gap_answers
+  9. N0415 flags         — each high-risk drug class in gap_answers has correct sub-flag in gold standard
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -70,6 +73,7 @@ class ConsistencyValidator:
         checks = [
             self._check_gg_consistency,
             self._check_bims_arithmetic,
+            self._check_bims_gap_crosscheck,
             self._check_phq_arithmetic,
             self._check_phq2_gate,
             self._check_date_ordering,
@@ -93,10 +97,14 @@ class ConsistencyValidator:
                 })
 
         checks_run = len(checks)
-        # Count distinct checks that produced no errors
+        # Count distinct checks that produced no errors.
+        # Error dicts use short "check" keys (e.g. "n0415_flags"); function names have
+        # the "_check_" prefix (e.g. "_check_n0415_flags").  Strip prefix when comparing.
         failed_check_names = {e["check"] for e in all_errors}
         checks_passed = sum(
-            1 for fn in checks if fn.__name__ not in failed_check_names
+            1 for fn in checks
+            if (fn.__name__[7:] if fn.__name__.startswith("_check_") else fn.__name__)
+            not in failed_check_names
         )
 
         return ValidationResult(
@@ -106,7 +114,7 @@ class ConsistencyValidator:
             checks_passed=checks_passed,
         )
 
-    # ── Check 7: Wound Presence ────────────────────────────────────────────────
+    # ── Check 8: Wound Presence ────────────────────────────────────────────────
 
     def _check_wound_presence(self, *, gap_answers: dict, items: dict) -> list[dict]:
         """If M1306 indicates wound(s) present, M1311 must be non-zero in both gap_answers and gold standard."""
@@ -132,15 +140,28 @@ class ConsistencyValidator:
 
         return errors
 
-    # ── Check 8: N0415 Flags ───────────────────────────────────────────────────
+    # ── Check 9: N0415 Flags ───────────────────────────────────────────────────
 
     _N0415_DRUG_CLASS_MAP: dict[str, str] = {
-        "Anticoagulant": "N0415E",
-        "Insulin": "N0415H",
-        "Opioid": "N0415I",
+        # Correct CMS OASIS-E1 N0415 sub-code assignments (A–I)
+        "Antipsychotic": "N0415A",
+        "Anticoagulant": "N0415B",
+        "Antibiotic": "N0415C",
+        "Antiplatelet": "N0415D",
+        "Hypoglycemic": "N0415E",
+        "Insulin": "N0415E",           # Insulin is a hypoglycemic agent
+        "Cardiovascular": "N0415F",
         "Digoxin": "N0415F",
         "Narrow Therapeutic": "N0415F",
+        "Diuretic": "N0415G",
+        "Opioid": "N0415H",
     }
+
+    # All N0415 sub-codes validated (A–I)
+    _N0415_ALL_CODES: tuple[str, ...] = (
+        "N0415A", "N0415B", "N0415C", "N0415D",
+        "N0415E", "N0415F", "N0415G", "N0415H", "N0415I",
+    )
 
     def _check_n0415_flags(self, *, gap_answers: dict, items: dict) -> list[dict]:
         """Every high-risk drug class in gap_answers N0415 must have its sub-flag set to '1' in the gold standard."""
@@ -149,7 +170,7 @@ class ConsistencyValidator:
             return []  # No N0415 data in gap_answers — skip
 
         # Determine which sub-flags should be set based on gap_answers drug classes
-        expected_flags: dict[str, str] = {code: "0" for code in ("N0415E", "N0415H", "N0415I", "N0415F")}
+        expected_flags: dict[str, str] = {code: "0" for code in self._N0415_ALL_CODES}
         for entry in n0415_answer:
             if not isinstance(entry, dict):
                 continue
@@ -157,6 +178,10 @@ class ConsistencyValidator:
             sub_flag = self._N0415_DRUG_CLASS_MAP.get(drug_class)
             if sub_flag:
                 expected_flags[sub_flag] = "1"
+
+        # N0415I = "1" only when ALL of A–H are "0"
+        if all(expected_flags[c] == "0" for c in self._N0415_ALL_CODES[:-1]):
+            expected_flags["N0415I"] = "1"
 
         errors: list[dict] = []
         for sub_flag, expected_value in expected_flags.items():
@@ -183,28 +208,74 @@ class ConsistencyValidator:
 
     # ── Check 1: GG Consistency ────────────────────────────────────────────────
 
-
     def _check_gg_consistency(self, *, gap_answers: dict, items: dict) -> list[dict]:
-        """GG0130 and GG0170 admission (X1) codes in gold standard must match gap_answers."""
+        """GG0130 and GG0170 admission (X1) codes in gold standard must match gap_answers.
+
+        Per pseudocode: FOR EACH gg_item IN [GG0130A1, GG0130B1, ...]
+          gold_value = gold_standard[gg_item]
+          gap_answer = gap_answers.find(field_code=gg_item).answer
+          IF gold_value != gap_answer: error
+
+        Supports three gap_answers formats:
+          1. Direct sub-code (field_codes=["GG0130A1"]) — PRD 2.2 compliant
+          2. Legacy grouped dict (field_codes=["GG0130"], answer={"Eating": "05", ...})
+          3. Legacy title-based (field_codes=["GG0130"], title="... - GG0130A_admission")
+        """
         errors: list[dict] = []
 
-        # Helper to get the expected value, handling both specific codes and legacy grouped dicts
-        def _get_expected_gg(base_prefix: str, mappings: dict, code: str, expected_letter: str) -> str | None:
-            # First try direct code lookup (PRD 2.2 compliant flattened format)
+        def _lookup_legacy_title(base_prefix: str, letter: str, suffix: str) -> str | None:
+            """Scan gap_answers sections for a question whose title encodes the GG sub-code.
+
+            Handles titles like "Self-Care: ... - GG0130A" and
+            "Mobility: ... - GG0170A_admission" / "GG0170A_discharge".
+            """
+            code_suffix_map = {
+                "GG0130": (r"GG0130([A-G])(?=[^A-Z]|$)", lambda tail, s: "2" if tail.lower().startswith("_discharge") else "1"),
+                "GG0170": (r"GG0170(RR|[A-P])(?=[^A-Z]|$)", lambda tail, s: "2" if tail.lower().startswith("_discharge") else "1"),
+            }
+            pattern, suffix_fn = code_suffix_map.get(base_prefix, (None, None))
+            if not pattern:
+                return None
+            for section in gap_answers.get("sections", []):
+                for q in section.get("questions", []):
+                    if base_prefix not in q.get("field_codes", []):
+                        continue
+                    answer = q.get("answer")
+                    if answer is None:
+                        continue
+                    title = q.get("title", "")
+                    m = re.search(pattern, title, re.IGNORECASE)
+                    if not m:
+                        continue
+                    found_letter = m.group(1).upper()
+                    tail = title[m.end():]
+                    found_suffix = suffix_fn(tail, suffix)
+                    if found_letter == letter.upper() and found_suffix == suffix:
+                        return str(answer)
+            return None
+
+        # Helper to get the expected value — tries all three formats
+        def _get_expected_gg(base_prefix: str, mappings: dict, code: str, expected_letter: str, suffix: str) -> str | None:
+            # 1. Direct sub-code lookup (PRD 2.2 compliant flattened format)
             val = _lookup_gap_answer(gap_answers, code)
             if val is not None:
                 return str(val)
-            
-            # Fallback to legacy grouped dictionary (e.g. {"Eating": "05"})
+
+            # 2. Legacy grouped dictionary (e.g. {"Eating": "05"})
             legacy_dict = _lookup_gap_answer(gap_answers, base_prefix) or gap_answers.get(base_prefix)
             if isinstance(legacy_dict, dict):
-                # Reverse lookup the keys that map to this expected letter
                 for key, mapped in mappings.items():
                     letters = mapped if isinstance(mapped, list) else [mapped]
                     if expected_letter in letters:
                         legacy_val = legacy_dict.get(key)
                         if legacy_val is not None:
                             return str(legacy_val)
+
+            # 3. Legacy title-based format (field_codes=["GG0130"] but letter in title)
+            title_val = _lookup_legacy_title(base_prefix, expected_letter, suffix)
+            if title_val is not None:
+                return title_val
+
             return None
 
         # ── GG0130 Self-Care ──────────────────────────────────────────────────
@@ -217,7 +288,7 @@ class ConsistencyValidator:
 
         for letter in sorted(gg0130_letters):
             code = f"GG0130{letter}1"
-            expected_value = _get_expected_gg("GG0130", GG0130_LABEL_TO_LETTER, code, letter)
+            expected_value = _get_expected_gg("GG0130", GG0130_LABEL_TO_LETTER, code, letter, "1")
             
             if expected_value is not None:
                 actual = items.get(code)
@@ -237,7 +308,7 @@ class ConsistencyValidator:
         gg0170_letters = set(GG0170_KEY_TO_LETTER.values())
         for letter in sorted(gg0170_letters):
             code = f"GG0170{letter}1"
-            expected_value = _get_expected_gg("GG0170", GG0170_KEY_TO_LETTER, code, letter)
+            expected_value = _get_expected_gg("GG0170", GG0170_KEY_TO_LETTER, code, letter, "1")
             
             if expected_value is not None:
                 actual = items.get(code)
@@ -258,7 +329,11 @@ class ConsistencyValidator:
     # ── Check 2: BIMS Arithmetic ───────────────────────────────────────────────
 
     def _check_bims_arithmetic(self, *, gap_answers: dict, items: dict) -> list[dict]:
-        """C0500 (BIMS Summary) must equal sum of C0200 + C0300A/B/C + C0400A/B/C."""
+        """C0500 (BIMS Summary) must equal C0200 + C0300 + C0400 in the gold standard.
+
+        Per pseudocode: bims_total = C0200 + C0300 + C0400; if gold_standard['C0500'] != bims_total → error.
+        Also verifies the two-level derivation: C0300 = C0300A+B+C and C0400 = C0400A+B+C.
+        """
         component_codes = [
             "C0200", "C0300A", "C0300B", "C0300C",
             "C0400A", "C0400B", "C0400C",
@@ -298,7 +373,47 @@ class ConsistencyValidator:
             }]
         return []
 
-    # ── Check 3: PHQ Arithmetic ────────────────────────────────────────────────
+    # ── Check 4: BIMS Cross-Reference (gap_answers vs gold standard) ────────────
+
+    def _check_bims_gap_crosscheck(self, *, gap_answers: dict, items: dict) -> list[dict]:
+        """Each raw BIMS sub-code in the gold standard must match the corresponding gap_answers value.
+
+        Per pseudocode: BIMS values are read from gap_answers and compared to gold standard.
+        This cross-document check ensures BIMS sub-scores were propagated verbatim from Step 4.
+
+        NOTE: C0300, C0400, and C0500 are DERIVED totals — the generator recalculates them
+        from sub-codes to fix arithmetic inconsistencies.  Those are validated by
+        _check_bims_arithmetic instead.  Only the directly-observed sub-codes are checked here.
+        """
+        # Only raw interview scores — NOT derived totals (C0300, C0400, C0500)
+        bims_raw_codes = [
+            "C0100", "C0200",
+            "C0300A", "C0300B", "C0300C",
+            "C0400A", "C0400B", "C0400C",
+            "C1310",
+        ]
+        errors: list[dict] = []
+        for code in bims_raw_codes:
+            gap_val = _lookup_gap_answer(gap_answers, code)
+            if gap_val is None:
+                continue  # Not in gap_answers — cannot cross-check
+            gold_val = items.get(code)
+            if gold_val is None:
+                continue  # Not in gold standard — skip
+            if str(gap_val).strip() != str(gold_val).strip():
+                errors.append({
+                    "check": "bims_gap_crosscheck",
+                    "code": code,
+                    "expected": str(gap_val),
+                    "actual": str(gold_val),
+                    "message": (
+                        f"{code}: gap_answers='{gap_val}' but gold standard='{gold_val}' "
+                        f"— BIMS values must be copied verbatim from Step 4"
+                    ),
+                })
+        return errors
+
+    # ── Check 4: PHQ Arithmetic ────────────────────────────────────────────────
 
     def _check_phq_arithmetic(self, *, gap_answers: dict, items: dict) -> list[dict]:
         """D0160 (PHQ Total) must equal sum of D0150X2 for all items where D0150X1 != '0'."""
@@ -343,10 +458,14 @@ class ConsistencyValidator:
             }]
         return []
 
-    # ── Check 4: PHQ-2 Gate ────────────────────────────────────────────────────
+    # ── Check 5: PHQ-2 Gate ────────────────────────────────────────────────────
 
     def _check_phq2_gate(self, *, gap_answers: dict, items: dict) -> list[dict]:
-        """If PHQ-2 screen (D0150A1 + D0150B1) < 3, downstream items C-I must be null."""
+        """If PHQ-2 screen (D0150A1 + D0150B1) < 3, downstream items C-I must be null.
+
+        Per pseudocode: checks D0150C1 through D0150I2 (I is the last PHQ-9 item in
+        OASIS-E1; 'J' in the pseudocode is a documentation typo).
+        """
         a1_raw = items.get("D0150A1")
         b1_raw = items.get("D0150B1")
         if a1_raw is None or b1_raw is None:
@@ -380,10 +499,14 @@ class ConsistencyValidator:
                     })
         return errors
 
-    # ── Check 5: Date Ordering ─────────────────────────────────────────────────
+    # ── Check 6: Date Ordering ─────────────────────────────────────────────────
 
     def _check_date_ordering(self, *, gap_answers: dict, items: dict) -> list[dict]:
-        """M1005 <= M0104 <= M0110 <= M0080 (hospital admit -> dc -> referral -> SOC)."""
+        """M1005 <= M0104 <= M0110 <= M0080 (hospital admit -> dc -> referral -> SOC).
+
+        Per pseudocode: errors if discharge_date <= admit_date OR
+        referral_date < discharge_date OR soc_date < referral_date.
+        """
         date_codes = ["M1005", "M0104", "M0110", "M0080"]
         parsed: dict[str, datetime] = {}
 
@@ -426,7 +549,7 @@ class ConsistencyValidator:
                 })
         return errors
 
-    # ── Check 6: Skip-Logic ────────────────────────────────────────────────────
+    # ── Check 7: Skip-Logic ────────────────────────────────────────────────────
 
     def _check_skip_logic(self, *, gap_answers: dict, items: dict) -> list[dict]:
         """M1306=0 => M1311/M1313/M1314 null; M1740=7 => no other M1740 flags set."""

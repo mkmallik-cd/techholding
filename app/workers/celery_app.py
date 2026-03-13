@@ -45,7 +45,6 @@ celery_app = Celery(
         "app.workers.tasks.gap_answers_tasks",
         "app.workers.tasks.oasis_gold_standard_tasks",
         "app.workers.tasks.consistency_validation_tasks",
-        "app.workers.tasks.repair_tasks",
         "app.workers.tasks.llm_audit_tasks",
     ],
 )
@@ -119,14 +118,6 @@ celery_app.conf.update(
         "workers.patient_generation.validate_consistency": {
             "queue": _STEP6_QUEUE,
             "routing_key": _STEP6_QUEUE,
-        },
-        "workers.patient_generation.repair_gap_answers": {
-            "queue": _STEP4_QUEUE,
-            "routing_key": _STEP4_QUEUE,
-        },
-        "workers.patient_generation.repair_gold_standard": {
-            "queue": _STEP5_QUEUE,
-            "routing_key": _STEP5_QUEUE,
         },
         "workers.patient_generation.run_llm_audit": {
             "queue": _STEP7_QUEUE,

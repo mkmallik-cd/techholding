@@ -282,7 +282,9 @@ class GapAnswersGenerator:
         referral_text: str,
         metadata: dict,
         scribe_text: str | None = None,
+        medication_list: dict | None = None,
         model_id: str,
+        audit_context: str | None = None,
     ) -> dict:
         """Run Step 4 end-to-end: filter → answer → validate.
 
@@ -291,6 +293,7 @@ class GapAnswersGenerator:
             metadata:      Serialised Step 1 metadata dict.
             scribe_text:   Optional ambient scribe note text.
             model_id:      Bedrock model ARN / short-name to use.
+            audit_context: Optional conflict summary from a previous LLM audit run.
 
         Returns:
             ``{"unanswered_response": {code: {question, answer}, ...}, "status": "draft"}``
@@ -317,7 +320,9 @@ class GapAnswersGenerator:
             referral_text=referral_text,
             scribe_text=scribe_text,
             metadata=metadata,
+            medication_list=medication_list,
             model_id=model_id,
+            audit_context=audit_context,
         )
         logger.info(
             "Step 4 Phase 3 complete: %d answers generated, archetype=%s",
@@ -401,7 +406,9 @@ class GapAnswersGenerator:
         referral_text: str,
         scribe_text: str | None,
         metadata: dict,
+        medication_list: dict | None = None,
         model_id: str,
+        audit_context: str | None = None,
     ) -> dict:
         """Phase 3: generate answers for all remaining codes in parallel batches.
 
@@ -444,7 +451,9 @@ class GapAnswersGenerator:
                 diagnosis_context=diagnosis_context,
                 scribe_section=scribe_section,
                 referral_text=referral_text,
+                medication_list=medication_list,
                 model_id=model_id,
+                audit_context=audit_context,
             )
             result.update(batch_result)
 
@@ -466,7 +475,9 @@ class GapAnswersGenerator:
         diagnosis_context: str,
         scribe_section: str,
         referral_text: str,
+        medication_list: dict | None = None,
         model_id: str,
+        audit_context: str | None = None,
     ) -> dict:
         """Run one Phase 3 LLM call for a single batch of field codes."""
         # Build per-code metadata from the canonical OASIS field map
@@ -483,14 +494,19 @@ class GapAnswersGenerator:
                 entry["question"] = code  # no template entry — LLM infers question text
             fields_with_metadata.append(entry)
 
+        medication_json = json.dumps(medication_list, indent=2) if medication_list else "(No medication data available)"
         answer_prompt = GAP_ANSWER_PROMPT_TEMPLATE.format(
             archetype=archetype,
             diagnosis_context=diagnosis_context,
             has_ambient_scribe="Yes" if "AMBIENT SCRIBE" in scribe_section else "No",
             referral_text=referral_text,
             scribe_section=scribe_section,
+            medication_json=medication_json,
             fields_with_metadata_json=json.dumps(fields_with_metadata, indent=2),
         )
+
+        if audit_context:
+            answer_prompt += f"\n\n{audit_context}"
 
         response = self.bedrock.invoke_json(
             prompt=answer_prompt,
@@ -596,3 +612,43 @@ class GapAnswersGenerator:
             logger.info("Step 4 PHQ validation: D0160 recalculated to %d", total)
 
         return unanswered_response
+
+    def generate_fix(
+        self,
+        *,
+        referral_text: str,
+        ambient_scribe_text: str,
+        medication_list_json: str,
+        current_gap_answers_json: str,
+        oasis_gold_standard_json: str,
+        audit_conflicts_text: str,
+        model_id: str,
+    ) -> dict:
+        """Produce a revised tap_tap_gap_answers.json that resolves LLM audit conflicts.
+
+        Uses GAP_ANSWERS_FIX_PROMPT which shows all existing documents + the
+        audit conflict summary and asks for a targeted JSON revision.
+        """
+        from app.config.prompts import GAP_ANSWERS_FIX_PROMPT
+        prompt = GAP_ANSWERS_FIX_PROMPT.format(
+            referral_text=referral_text[:6000],
+            ambient_scribe_text=ambient_scribe_text[:4000],
+            medication_list_json=medication_list_json[:2000],
+            current_gap_answers_json=current_gap_answers_json[:6000],
+            oasis_gold_standard_json=oasis_gold_standard_json[:3000],
+            audit_conflicts_text=audit_conflicts_text,
+        )
+        response = self.bedrock.invoke_json(
+            prompt=prompt,
+            model_id=model_id,
+            max_tokens=4096,
+        )
+        text = response["text"].strip()
+        try:
+            result = json.loads(extract_json_object(text))
+        except Exception as exc:
+            logger.error("generate_fix JSON parse failed (%s) — attempting repair", exc)
+            result = repair_truncated_json(text)
+        if not isinstance(result, dict):
+            raise ValueError(f"generate_fix returned non-dict: {type(result)}")
+        return result

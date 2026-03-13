@@ -372,10 +372,16 @@ RULES:
 - If a code is ambiguous, missing, or only partially answerable, do NOT include it.
 - NEVER include BIMS codes (C0100, C0200, C0300, C0300A, C0300B, C0300C, C0400, C0400A,
   C0400B, C0400C, C0500, C1310) — these require live cognitive testing.
-- NEVER include PHQ mood codes (D0150A1 through D0150I2, D0160, PHQ_MOOD_INTERVIEW) —
+- NEVER include PHQ mood codes (D0150A1 through D0150I2, D0160) —
   these require a live structured mood interview.
 - NEVER include GG discharge goal codes (GG0100, GG0110, GG0130, GG0170, GG0170C) —
   these require clinical judgment about expected functional recovery.
+- NEVER include a bare root GG0130 or GG0170 code — always use the full sub-item suffix
+  (e.g. GG0130A1, GG0170D1). Root codes without a letter+digit suffix are invalid.
+- Return ONLY real OASIS-E1 item codes. Non-clinical EHR narrative keys such as
+  ALLERGIES, VITAL_SIGNS, CIRCULATORY_HISTORY, MENTAL_STATUS, SKIN, ACTIVITIES_PERMITTED,
+  LAB_RESULTS, and similar non-coded descriptors must NEVER appear. If such a code is in
+  the input list, omit it from the output entirely.
 - Return a JSON object with a single key "answerable_codes" containing an array of strings.
 
 PATIENT DOCUMENTATION:
@@ -393,9 +399,19 @@ Respond with ONLY valid JSON:
 
 # Phase 3: answer — generate OASIS answers for all mandatory + answerable codes.
 # Placeholders: {archetype}, {diagnosis_context}, {has_ambient_scribe},
-#   {referral_text}, {scribe_section}, {fields_with_metadata_json}
+#   {referral_text}, {scribe_section}, {medication_json}, {fields_with_metadata_json}
 GAP_ANSWER_PROMPT_TEMPLATE = """\
 You are an expert OASIS-E1 clinical documentation specialist generating synthetic patient dataset answers.
+
+⚠️  CRITICAL SCOPE RULE — READ BEFORE GENERATING ANY ANSWER:
+The ONLY valid field codes in this task are real OASIS-E1 item codes (e.g. M1021, C0200, D0150A1,
+GG0130A1, N0415A). The following keys are NOT OASIS-E1 codes and must be COMPLETELY SKIPPED
+— do NOT generate an answer for them under any circumstances:
+  ALLERGIES, VITAL_SIGNS, ACTIVITIES_PERMITTED, CIRCULATORY_HISTORY, MENTAL_STATUS, SKIN,
+  LAB_RESULTS, WOUND_CARE, FALL_RISK_FACTORS, COGNITIVE_STATUS, FUNCTIONAL_LIMITATIONS,
+  HOMEBOUND_STATUS, SAFETY_MEASURES, NUTRITIONAL_STATUS, CAREGIVER_STATUS,
+  PHQ_MOOD_INTERVIEW, and any other free-text EHR narrative descriptor.
+If any of the above appear in the field list, omit them entirely from the output JSON.
 
 PATIENT CONTEXT:
 - Archetype: {archetype}
@@ -407,6 +423,9 @@ PATIENT CONTEXT:
 
 {scribe_section}
 
+--- MEDICATION LIST (use this to derive N0415 flags per Rule 6 below) ---
+{medication_json}
+
 TASK:
 Generate clinically realistic OASIS answers for ALL of the field codes listed below.
 Every answer MUST be clinically consistent with the patient's presentation described above.
@@ -416,15 +435,18 @@ CRITICAL SCORING RULES — READ CAREFULLY:
 1. BIMS (C section — MANDATORY):
    - C0100: Cognitive Assessment — 0=No, 1=Yes (whether BIMS was administered)
    - C0200: Words repeated correctly (0=none, 1=one, 2=two, 3=all three words "sock/blue/bed")
-   - C0300: Temporal orientation grouping code (use 99 if unable)
+   - C0300: DERIVED sum — MUST EQUAL C0300A + C0300B + C0300C (range 0–6). Use 99 only if patient refused/unable.
    - C0300A: Year correct — 0=incorrect, 1=missed by >5y, 2=missed by 2-5y, 3=correct
    - C0300B: Month correct — 0=incorrect, 1=missed by >1mo, 2=correct
    - C0300C: Day of week correct — 0=incorrect, 1=correct
-   - C0400: Recall grouping code (use 99 if unable)
+   - C0400: DERIVED sum — MUST EQUAL C0400A + C0400B + C0400C (range 0–6). Use 99 only if patient refused/unable.
    - C0400A: Recall "sock" — 0=could not recall, 1=yes with cue, 2=no cue needed
    - C0400B: Recall "blue" — 0=could not recall, 1=yes with cue, 2=no cue needed
    - C0400C: Recall "bed" — 0=could not recall, 1=yes with cue, 2=no cue needed
-   - C0500: BIMS TOTAL — MUST EQUAL EXACTLY: C0200 + C0300A + C0300B + C0300C + C0400A + C0400B + C0400C (range 0-15)
+   - C0500: BIMS TOTAL — MUST EQUAL EXACTLY: C0200 + C0300 + C0400 (range 0-15).
+     Compute sequentially: Step A: C0300 = C0300A+C0300B+C0300C (0–6);
+                           Step B: C0400 = C0400A+C0400B+C0400C (0–6);
+                           Step C: C0500 = C0200 + C0300 + C0400.
    - C1310: Brief Cognitive Interview for RCA — 0=No, 1=Yes
    - Use 99 for any code if patient was unable/refused to participate in BIMS
 
@@ -432,14 +454,15 @@ CRITICAL SCORING RULES — READ CAREFULLY:
    - D0150A1 through D0150I1: Symptom presence — Column 1 (0=symptom not present, 1=symptom present)
    - D0150A2 through D0150I2: Frequency — Column 2 (0=not at all, 1=several days, 2=more than half the days, 3=nearly every day)
    - D0160: PHQ TOTAL — MUST EQUAL EXACTLY the sum described below
-   - PHQ_MOOD_INTERVIEW: "PHQ-9 Mood Interview" — use "completed" or "99 - Unable to complete"
+   (PHQ_MOOD_INTERVIEW is not an OASIS-E1 code — omit it per the CRITICAL SCOPE RULE above)
 
    ⚠️  CRITICAL PHQ-2 SCREENING GATE (CMS mandatory rule — violations cause dataset rejection):
    Step 1 — Score the PHQ-2 screen: screen_score = D0150A1 + D0150B1
    Step 2 — If screen_score < 3 (negative screen):
      • D0150C1 through D0150I1 MUST ALL be null (NOT 0 — use null/None)
      • D0150C2 through D0150I2 MUST ALL be null
-     • D0160 = D0150A2 (if A1=1) + D0150B2 (if B1=1) ONLY — items C through I excluded
+     • D0160 = (D0150A2 if D0150A1=1 else 0) + (D0150B2 if D0150B1=1 else 0) ONLY — items C through I excluded
+     • Example (negative screen): A1=1, A2=2, B1=1, B2=1 → D0160 = 2+1 = 3 (NOT 4 — only sum frequencies where X1=1)
    Step 3 — If screen_score >= 3 (positive screen):
      • Administer all 9 items A through I normally
      • D0160 = sum of all D0150X2 values where the corresponding D0150X1 = 1
@@ -448,9 +471,35 @@ CRITICAL SCORING RULES — READ CAREFULLY:
      C2=null … I2=null, D0160 = A2 + B2 (if those symptoms present)
    NEVER set D0150C-I items to any non-null value when screen_score < 3.
 
-3. GG Discharge Goals (GG0170 items — MANDATORY — set EXPECTED DISCHARGE status, not current):
-   Scale: 01=Dependent, 02=Substantial/Maximal assist, 03=Partial/Moderate assist,
-          04=Supervision/touching assist, 05=Setup/cleanup only, 06=Independent
+3. GG Self-Care / Mobility Sub-codes (MANDATORY — use full sub-item code, NEVER bare root GG0130 or GG0170):
+   GG0130 Self-Care (X1 = SOC/ROC admission performance, X2 = expected discharge goal):
+     GG0130A1/A2 = Eating
+     GG0130B1/B2 = Oral Hygiene
+     GG0130C1/C2 = Shower/Bathe Self
+     GG0130D1/D2 = Upper Body Dressing ← FREQUENTLY MISSING — MUST emit both D1 and D2
+     GG0130E1/E2 = Lower Body Dressing ← FREQUENTLY MISSING — MUST emit both E1 and E2
+     GG0130F1/F2 = Toileting Hygiene
+     GG0130G1/G2 = Oral Hygiene (denture/remove)
+   GG0170 Mobility (X1 = admission, X2 = discharge goal):
+     GG0170A1/A2 = Roll Left and Right in Bed
+     GG0170B1/B2 = Sit to Lying
+     GG0170C1/C2 = Lying to Sitting on Side of Bed
+     GG0170D1/D2 = Sit to Stand ← MUST emit
+     GG0170E1/E2 = Chair/Bed-to-Chair Transfer ← MUST emit
+     GG0170F1/F2 = Toilet Transfer ← MUST emit
+     GG0170G1/G2 = Car Transfer
+     GG0170H1/H2 = Walk 10 Feet
+     GG0170I1/I2  = Walk 50 Feet with Two Turns
+     GG0170J1/J2 = Walk 150 Feet
+     GG0170K1/K2 = Walking 10 Feet on Uneven Surfaces
+     GG0170L1/L2 = 1 Step (Curb)
+     GG0170M1/M2 = 4 Steps
+     GG0170N1/N2 = 12 Steps
+     GG0170O1/O2 = Picking Up Object
+     GG0170P1/P2 = Wheel 50 Feet with Two Turns
+     GG0170RR1   = Wheel 50 Feet on Rough/Uneven Surfaces (admission only)
+   GG Scale: 01=Dependent, 02=Substantial/Maximal assist, 03=Partial/Moderate assist,
+             04=Supervision/touching assist, 05=Setup/cleanup only, 06=Independent
    Exceptions: 07=Refused, 09=Not applicable, 10=Equipment unavailable, 88=Not attempted
 
 4. OASIS M-codes — common value ranges:
@@ -459,10 +508,23 @@ CRITICAL SCORING RULES — READ CAREFULLY:
    - M1060: Height in inches, Weight in pounds (e.g., "66 inches, 172 lbs")
    - M1400: Dyspnea — 0=No dyspnea, 1=With exertion, 2=With ADLs, 3=At rest
 
-5. Non-OASIS narrative codes (ALLERGIES, VITAL_SIGNS, ACTIVITIES_PERMITTED, etc.):
-   Use descriptive string answers consistent with the patient's archetype.
+5. GG0110 Prior Device Use (0=No, 1=Yes per device — device used before this illness/injury):
+   GG0110A = Cane or Crutch, GG0110B = Walker, GG0110C = Wheelchair (manual or electric),
+   GG0110D = Prosthetics/Orthotics, GG0110E = None of the above, GG0110F = Other
 
-6. For ALL codes, generate archetype-appropriate answers:
+6. N0415 High-Risk Drug Classes — derive DETERMINISTICALLY from the MEDICATION LIST above:
+   For each flag, set "1" if any active medication matches the drug class; "0" otherwise.
+   N0415A = Antipsychotic    → haloperidol, quetiapine, risperidone, olanzapine, aripiprazole
+   N0415B = Anticoagulant    → warfarin, apixaban, rivaroxaban, dabigatran, enoxaparin, heparin
+   N0415C = Antibiotic       → any systemic antibiotic (amoxicillin, ciprofloxacin, vancomycin, etc.)
+   N0415D = Antiplatelet     → aspirin ≥325mg, clopidogrel, ticagrelor, prasugrel
+   N0415E = Hypoglycemic     → insulin, metformin, glipizide, sitagliptin, empagliflozin
+   N0415F = Cardiovascular   → digoxin, amiodarone, flecainide, sotalol, dronedarone
+   N0415G = Diuretic         → furosemide, torsemide, bumetanide, hydrochlorothiazide, chlorthalidone
+   N0415H = Opioid           → oxycodone, morphine, hydromorphone, fentanyl, tramadol, codeine, buprenorphine
+   N0415I = None of above    → set "1" ONLY if ALL of N0415A through N0415H are "0"
+
+7. For ALL codes, generate archetype-appropriate answers:
    - CHF patient: activity intolerance, lower extremity edema, dyspnea on exertion
    - TKR patient: post-surgical, weight-bearing restrictions, knee incision, pain 5-7/10
    - Diabetic foot ulcer: wound present, glucose management, peripheral neuropathy
@@ -482,19 +544,28 @@ Return ONLY a valid JSON object (no markdown, no backticks, no explanatory text)
   ...
 }}
 
-Every field code in the list MUST have an entry in the output.
+Every OASIS-E1 field code in the list MUST have an entry in the output.
+Non-OASIS codes (ALLERGIES, VITAL_SIGNS, PHQ_MOOD_INTERVIEW, etc.) must be omitted entirely — do NOT include them with null answers.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 6 — OASIS Gold Standard
 # ─────────────────────────────────────────────────────────────────────────────
 # Placeholders: {archetype}, {diagnosis_context}, {has_scribe}, {section_name},
-#   {referral_text}, {scribe_section}, {medication_summary}, {gap_context},
+#   {referral_text}, {scribe_section}, {medication_json}, {gap_context},
 #   {field_codes_json}
 
 OASIS_GOLD_STANDARD_PROMPT = """\
 You are an expert OASIS-E1 clinical documentation specialist generating a gold-standard \
 synthetic patient assessment for AI training data.
+
+⚠️  OUTPUT SCOPE RULE — MANDATORY:
+Only generate values for real OASIS-E1 item codes. The following keys are NOT OASIS-E1 codes;
+if they appear in the batch, skip them entirely — do NOT output a value for them:
+  PHQ_MOOD_INTERVIEW, ALLERGIES, VITAL_SIGNS, CIRCULATORY_HISTORY, MENTAL_STATUS, SKIN,
+  LAB_RESULTS, WOUND_CARE, FALL_RISK_FACTORS, COGNITIVE_STATUS, FUNCTIONAL_LIMITATIONS,
+  HOMEBOUND_STATUS, SAFETY_MEASURES, NUTRITIONAL_STATUS, CAREGIVER_STATUS,
+  ACTIVITIES_PERMITTED, and any other free-text EHR narrative descriptor.
 
 PATIENT CONTEXT:
 - Archetype: {archetype}
@@ -508,26 +579,36 @@ SOURCE DOCUMENTS:
 
 {scribe_section}
 
---- CURRENT MEDICATION LIST (Active Medications) ---
-{medication_summary}
+--- CURRENT MEDICATION LIST (Active Medications — use this to derive N0415 flags per Mandatory Rule 4) ---
+{medication_json}
 
 --- STEP 4 GAP ASSESSMENT (AUTHORITATIVE VALUES — READ CAREFULLY) ---
 {gap_context}
 
-⚠️  CRITICAL RULE — GG AND ADL CONSISTENCY:
-The STEP 4 GAP ASSESSMENT above was generated by a live clinical assessment of
-this patient.  Its GG0130, GG0170, GG0100, and M-ADL values are AUTHORITATIVE.
-When generating GG0130A1/A2/B1/B2/..., GG0170A1/A2/..., GG0100A/B/C/D,
-M1800–M1910 codes in this batch:
-  • The Step 4 values provided in the context block are authoritative.
-  • Copy the individual admission sub-codes (like GG0130A1, GG0170A1, GG0100A) VERBATIM if they are listed in Step 4.
-  • (Legacy support): If Step 4 uses grouped labels (e.g., GG0130 "Eating"), map it to the corresponding admission code (GG0130A1).
+⚠️  CRITICAL RULE — GG, ADL, AND AUTHORITATIVE PROPAGATION:
+The STEP 4 GAP ASSESSMENT above is the authoritative source for ALL GG0130, GG0170, GG0100,
+N0415, M1800–M1910, BIMS (C section), and PHQ (D section) values in this record.
+For EVERY field present in gap_context:
+  • Copy the value VERBATIM — do NOT re-derive, re-interpret, or override it.
+  • Your rationale MUST state "Propagated verbatim from Step 4 gap assessment."
+  • (Legacy support): If Step 4 uses grouped labels (e.g., GG0130 "Eating"), map it to the
+    correct admission code (GG0130A1).
   • Discharge goal (X2 codes) = typically 1 level more independent than the admission (X1) value.
-  • M1800–M1910 ADL values in the Step 4 section above are the correct answers
-    — use them verbatim; your rationale should state "Consistent with Step 4 gap assessment."
-  • PRD RULE: GG discharge goals ALWAYS require clinical judgment; they are NEVER
-    extractable from referral or scribe documents — they are set in Step 4 and
-    must propagate unchanged into the gold standard.
+
+FREQUENTLY MISSING GG SUB-CODES — you MUST include ALL of the following in your output:
+  GG0130D1 / GG0130D2 = Upper Body Dressing (admission performance / discharge goal)
+  GG0130E1 / GG0130E2 = Lower Body Dressing (admission performance / discharge goal)
+  GG0170A1 / GG0170A2 = Roll Left/Right in Bed
+  GG0170B1 / GG0170B2 = Sit to Lying
+  GG0170C1 / GG0170C2 = Lying to Sitting on Side of Bed
+  GG0170D1 / GG0170D2 = Sit to Stand ← MUST emit
+  GG0170E1 / GG0170E2 = Chair/Bed-to-Chair Transfer ← MUST emit
+  GG0170F1 / GG0170F2 = Toilet Transfer ← MUST emit
+
+A1010 SPECIAL RULE: A1010 is the Race/Ethnicity multi-select field (coded flags, not narrative).
+Valid codes: 01=American Indian/Alaska Native, 02=Asian, 03=Black/African American,
+04=Hispanic/Latino, 05=White, 06=Other, 99=Unknown.
+NEVER fill A1010 with address text, patient name, or any non-code narrative.
 
 ═══════════════════════════════════════════════════════════
 OASIS-E1 SCORING REFERENCE (for this batch):
@@ -608,10 +689,41 @@ RULES:
 2. For object/array/free-text fields, use a clinically appropriate descriptive string
 3. Rationale: 1-2 sentences citing specific evidence from the source documents above
 4. Confidence: "high" if clearly supported, "medium" if inferred, "low" if limited evidence
-5. ALL codes in the list must appear in the output array
+5. ALL OASIS-E1 codes in the list must appear in the output; non-OASIS keys (e.g.
+   PHQ_MOOD_INTERVIEW, ALLERGIES) must be omitted entirely — do NOT include them at all.
 6. ⚠️  PHQ-2 GATE (CMS mandatory): If D0150A1 + D0150B1 < 3, then D0150C1–I1 and
    D0150C2–I2 MUST be null (not 0 — null). D0160 = only A2+B2 (if present). This rule
    overrides any other clinical reasoning. Do NOT set C–I items when the screen is negative.
+
+MANDATORY RULE 2 — BIMS ARITHMETIC CROSS-VERIFY:
+If BIMS codes appear in this batch or in gap_context, verify the arithmetic:
+  C0300 MUST equal C0300A + C0300B + C0300C.
+  C0400 MUST equal C0400A + C0400B + C0400C.
+  C0500 MUST equal C0200 + C0300 + C0400.
+If the propagated gap value is arithmetically incorrect, correct it and note the discrepancy
+in the rationale (e.g. "Corrected: gap C0500=12 conflicts with sub-score sum=10; using 10").
+
+MANDATORY RULE 3 — PHQ D0160 CROSS-VERIFY:
+If PHQ codes appear in this batch or in gap_context, verify the PHQ-2 gate and D0160:
+  screen_score = D0150A1 + D0150B1.
+  If screen_score < 3: D0160 = (D0150A2 if D0150A1=1 else 0) + (D0150B2 if D0150B1=1 else 0).
+  If screen_score >= 3: D0160 = sum of all D0150X2 values where the corresponding D0150X1=1.
+If the propagated gap D0160 is inconsistent with this formula, correct it and note in rationale.
+
+MANDATORY RULE 4 — N0415 FROM MEDICATION LIST:
+Derive N0415A–I flags deterministically from the MEDICATION LIST above:
+  N0415A = Antipsychotic    → haloperidol, quetiapine, risperidone, olanzapine, aripiprazole
+  N0415B = Anticoagulant    → warfarin, apixaban, rivaroxaban, dabigatran, enoxaparin, heparin
+  N0415C = Antibiotic       → any systemic antibiotic (amoxicillin, ciprofloxacin, vancomycin, etc.)
+  N0415D = Antiplatelet     → aspirin ≥325mg, clopidogrel, ticagrelor, prasugrel
+  N0415E = Hypoglycemic     → insulin, metformin, glipizide, sitagliptin, empagliflozin
+  N0415F = Cardiovascular   → digoxin, amiodarone, flecainide, sotalol, dronedarone
+  N0415G = Diuretic         → furosemide, torsemide, bumetanide, hydrochlorothiazide, chlorthalidone
+  N0415H = Opioid           → oxycodone, morphine, hydromorphone, fentanyl, tramadol, codeine, buprenorphine
+  N0415I = None of above    → set "1" ONLY if ALL of N0415A through N0415H are "0"
+Set each flag to "1" if a matching medication is present, "0" otherwise.
+If N0415 values were propagated from gap_context, cross-verify against the medication list
+and correct if inconsistent — note the correction in rationale.
 
 FIELD CODES FOR THIS BATCH:
 {field_codes_json}
@@ -681,6 +793,61 @@ For EACH field in the batch:
 3. Flag a CONFLICT if two or more documents imply DIFFERENT values for the same field.
 4. Write a concise explanation of why the recorded OASIS value is the correct clinical pick.
 
+⚠️  CRITICAL OASIS CODEBOOK RULES — READ BEFORE AUDITING ANY FIELD:
+
+1. D0150 vs N0415 — these are COMPLETELY DIFFERENT sections:
+   - D0150A–I are PHQ-9 MOOD INTERVIEW items (symptoms of depression/anxiety):
+       A = Little interest or pleasure in doing things
+       B = Feeling down, depressed, or hopeless
+       C = Trouble falling/staying asleep or sleeping too much
+       D = Feeling tired or having little energy
+       E = Poor appetite or overeating
+       F = Feeling bad about yourself
+       G = Trouble concentrating
+       H = Moving/speaking slowly OR being fidgety/restless
+       I = Thoughts of being better off dead, or hurting yourself
+     Column 1 (X1) = symptom presence (0=not present, 1=present)
+     Column 2 (X2) = frequency (0=not at all, 1=several days, 2=>half the days, 3=nearly every day)
+   - N0415A–I are HIGH-RISK DRUG CLASS flags (completely unrelated to mood):
+       A=Antipsychotic, B=Anticoagulant, C=Antibiotic, D=Antiplatelet,
+       E=Hypoglycemic/Insulin, F=Cardiovascular, G=Diuretic, H=Opioid,
+       I=None of the above drug classes received
+   ❌ NEVER interpret D0150 fields using drug/medication terminology.
+   ❌ NEVER compare D0150 values to the medication list.
+
+2. PHQ-2 GATE — null on D0150 items C–I is CORRECT (not a data error):
+   - If D0150A1 + D0150B1 < 3 (negative PHQ-2 screen), CMS requires items C–I to be null.
+   - A null value on D0150C1 through D0150I2 when A1+B1 < 3 is the CORRECT per-protocol value.
+   - Do NOT flag D0150C–I = null as a conflict or error when the PHQ-2 screen is negative.
+
+3. BIMS AUTHORITY — gap_answers is the ONLY valid source for BIMS:
+   - C0100–C1310 (BIMS section) values come from live cognitive testing documented in gap_answers.
+   - The gold standard C-section values ARE the gap_answers values (copied verbatim).
+   - If an ambient scribe note describes cognitive behaviour that implies a different BIMS score,
+     that is NOT a conflict — the standardised BIMS test result (gap_answers) takes precedence.
+   - C0300 and C0400 totals are DERIVED (C0300 = C0300A+B+C; C0400 = C0400A+B+C). If gap_answers
+     shows an inconsistent group total it may be corrected by code — this is expected, not a conflict.
+
+4. PHQ AUTHORITY — gap_answers is the ONLY valid source for D0150/D0160:
+   - D0150 and D0160 values come from a structured mood interview in gap_answers.
+   - Do NOT compare D0150 values to referral or ambient scribe documents.
+   - If the mood interview was not administered, all D0150 values will be null (valid).
+
+5. GG0130/GG0170 X1 admission codes — only gap_answers is authoritative:
+   - GG0130X1 and GG0170X1 codes are admission-performance measurements from gap_answers.
+   - Referral/scribe documents describing functional ability do NOT override gap_answers X1 values.
+
+6. GG0130/GG0170 X2 discharge goal codes — these are LLM-generated clinical goals:
+   - GG0130A2, GG0130B2, … GG0170P2 are EXPECTED DISCHARGE GOALS, NOT current performance.
+   - gap_answers may contain a bare root code GG0130=09 (not attempted summary) — this is a
+     DIFFERENT field from the individual sub-item X2 goal codes. Do NOT compare them.
+   - Never flag GG0130X2 or GG0170X2 as conflicting with gap_answers GG0130=09/GG0170=09.
+
+7. A1005 / A1010 / A1110 — field definitions (LLM frequently confuses these):
+   - A1005 = Ethnicity: 1=Not Hispanic/Latino, 2=Hispanic/Latino
+   - A1010 = Race (multi-select sub-flags, e.g. A1010_5=1 for White) — NOT ZIP code or state
+   - A1110 = Preferred language code (e.g. "EN" for English, "SP" for Spanish) — NOT a date
+
 Return ONLY a valid JSON array — no markdown fences, no commentary, no trailing text.
 Each element must have EXACTLY these keys:
   "field_code"        — the OASIS field code (string, uppercase)
@@ -746,4 +913,335 @@ OUTPUT \u2014 return a JSON array only, example structure:
   }}
 ]
 """
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit-Fix Prompts (used when LLM audit finds conflicts and a re-run is needed)
+#
+# Each prompt shows ALL currently generated documents + the audit report and
+# asks the LLM to produce a REVISED version of the specific document that
+# resolves the flagged inconsistencies.  These replace the normal generation
+# prompt for the retry run — they are targeted revision prompts, not from-
+# scratch generation prompts.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Step 2 fix — revise referral_packet.txt
+# Placeholders: {current_referral_text}, {medication_list_json},
+#   {ambient_scribe_text}, {gap_answers_json}, {oasis_gold_standard_json},
+#   {audit_conflicts_text}
+REFERRAL_PACKET_FIX_PROMPT = """\
+You are a clinical documentation specialist reviewing previously generated synthetic home-health patient documents.
+A cross-document LLM audit has identified inconsistencies. Your task is to produce a REVISED version of the
+REFERRAL PACKET that resolves these inconsistencies and makes all documents internally consistent.
+
+=== ALL CURRENTLY GENERATED DOCUMENTS ===
+
+--- REFERRAL PACKET (current version — to be revised) ---
+{current_referral_text}
+
+--- MEDICATION LIST (current version — read-only reference) ---
+{medication_list_json}
+
+--- AMBIENT SCRIBE NOTE (current version — read-only reference) ---
+{ambient_scribe_text}
+
+--- TAP-TAP GAP ANSWERS (current version — read-only reference) ---
+{gap_answers_json}
+
+--- OASIS GOLD STANDARD (current version — read-only reference) ---
+{oasis_gold_standard_json}
+
+=== AUDIT FINDINGS — INCONSISTENCIES TO FIX ===
+{audit_conflicts_text}
+
+=== YOUR TASK ===
+Produce a REVISED referral packet that resolves every inconsistency listed in the audit findings.
+
+MANDATORY CONSTRAINTS — every constraint below must be satisfied in your revised output:
+
+1. PRESERVE patient demographics EXACTLY — do not alter: patient name, DOB, MRN, Medicare ID (MBI),
+   residential address, gender, ethnicity, or race. These must be identical to the current version.
+
+2. PRESERVE all 11 required sections with correct content:
+   1. PATIENT HEADER          7. DISCHARGE MEDICATION LIST
+   2. REFERRAL DATES          8. ORDERED HOME HEALTH SERVICES
+   3. REFERRING PHYSICIAN     9. HOMEBOUND STATUS (must include objective measures)
+   4. PRIMARY DIAGNOSIS      10. PHYSICIAN ORDERS
+   5. SECONDARY DIAGNOSES    11. FACE-TO-FACE (F2F) DOCUMENTATION
+   6. HISTORY & PHYSICAL
+
+3. ICD-10 codes must remain syntactically valid (pattern: letter + 2 digits + period + alphanumeric
+   suffix, e.g. I50.9, E11.9, Z87.39). Do not invent new codes — only use codes already present or
+   standard alternatives for the same clinical condition.
+
+4. The F2F section must document clinical findings, the certifying physician, and homebound rationale —
+   do not delete or abbreviate it.
+
+5. Changes ONLY what is necessary to resolve the flagged inconsistencies — do not alter unrelated content.
+
+6. Remains clinically realistic and consistent with all other documents (listed as read-only above).
+
+Output ONLY the revised plain-text referral packet. No JSON, no markdown, no commentary before or after.
+Generate the revised referral packet now:"""
+
+# Step 3 fix — revise ambient_scribe.txt
+# Placeholders: {referral_text}, {current_ambient_scribe_text}, {medication_list_json},
+#   {gap_answers_json}, {oasis_gold_standard_json}, {audit_conflicts_text}
+AMBIENT_SCRIBE_FIX_PROMPT = """\
+You are a clinical documentation specialist reviewing previously generated synthetic home-health patient documents.
+A cross-document LLM audit has identified inconsistencies. Your task is to produce a REVISED version of the
+AMBIENT SCRIBE NOTE that resolves these inconsistencies and makes all documents internally consistent.
+
+=== ALL CURRENTLY GENERATED DOCUMENTS ===
+
+--- REFERRAL PACKET (current version — read-only reference) ---
+{referral_text}
+
+--- MEDICATION LIST (current version — read-only reference) ---
+{medication_list_json}
+
+--- AMBIENT SCRIBE NOTE (current version — to be revised) ---
+{current_ambient_scribe_text}
+
+--- TAP-TAP GAP ANSWERS (current version — read-only reference) ---
+{gap_answers_json}
+
+--- OASIS GOLD STANDARD (current version — read-only reference) ---
+{oasis_gold_standard_json}
+
+=== AUDIT FINDINGS — INCONSISTENCIES TO FIX ===
+{audit_conflicts_text}
+
+=== YOUR TASK ===
+Produce a REVISED ambient scribe note that resolves every inconsistency listed in the audit findings.
+
+MANDATORY FORMAT RULES — your output must satisfy ALL of the following:
+
+1. VOICE: Nurse voice, first person throughout ("I arrived...", "I assessed...", "I observed...").
+
+2. DOCUMENT HEADER (keep identical to the current version — do NOT alter any of these fields):
+   AMBIENT NURSING ASSESSMENT — START OF CARE
+
+   Patient: [same as current], DOB: [same as current], MRN: [same as current]
+   Address: [same as current]
+   Medicare ID: [same as current]
+   Visit Date: [same as current]   Time: 09:30
+   Clinician: [same RN name], RN
+   Supervising Physician: [same as current]
+
+3. TIMESTAMPS: Use HH:MM 24-hour format. Start at 09:30; each section ~5-15 minutes apart.
+
+4. REQUIRED SECTIONS — all 7 must appear in EXACTLY this order with EXACTLY this header text:
+
+   VITAL SIGNS — [timestamp]
+   → State vitals: BP, HR (with rhythm), RR, O2 saturation, Temperature, Weight, Pain score.
+   → 1-2 sentences interpreting the vitals.
+
+   PHYSICAL ASSESSMENT — [timestamp]
+   → 2-4 sentences prose: relevant abnormal findings, measurements, laterality.
+
+   ADL OBSERVATIONS — [timestamp]
+   → 2-3 sentences. Use ONLY these exact assistance-level terms:
+     "Independent" | "Independent with setup/cleanup" | "Minimal assistance" |
+     "Moderate assistance" | "Substantial/Maximal assistance" | "Dependent"
+
+   HOME SAFETY OBSERVATION — [timestamp]
+   → 2-3 sentences: specific named hazards, fall risk factors, modifications recommended.
+
+   PATIENT GOALS — [timestamp]
+   → Format exactly as:
+     Patient stated: "[Direct quote — patient's own words]"
+     Clinical goal: [SMART goal — measurable metric and timeframe]
+
+   PAIN ASSESSMENT — [timestamp]
+   → 2-3 sentences: location, numeric rating, quality descriptor, aggravating/relieving factors.
+
+   PLAN & FOLLOW-UP — [timestamp]
+   → 2-3 sentences: next visit, physician orders to confirm, education given with patient
+     verbalization of understanding. Use "SN Xw#" visit frequency format.
+
+5. LENGTH: 600-900 words total. Plain text — NO markdown, NO bullet points in the main body.
+
+6. STRICT PROHIBITIONS — these terms must NEVER appear anywhere in your output:
+   ❌ "BIMS score"
+   ❌ "BIMS interview"
+   ❌ "PHQ-2"
+   ❌ "PHQ-9"
+   ❌ "PHQ2"
+   ❌ "PHQ9"
+   → For cognition write: "alert and oriented x4 (person/place/time/event)" or "oriented x3", etc.
+   → For mood write descriptively: "appeared anxious but cooperative", "tearful at times, engaged with teaching"
+   → These standardised screening tools are documented in gap-answer sections ONLY.
+
+7. Changes ONLY what is necessary to resolve the flagged inconsistencies — do not alter unrelated content.
+
+Output ONLY the revised plain-text ambient scribe note. No JSON, no markdown, no commentary before or after.
+Generate the revised ambient scribe note now:"""
+
+# Step 4 fix — revise tap_tap_gap_answers.json
+# Placeholders: {referral_text}, {ambient_scribe_text}, {medication_list_json},
+#   {current_gap_answers_json}, {oasis_gold_standard_json}, {audit_conflicts_text}
+GAP_ANSWERS_FIX_PROMPT = """\
+You are a clinical documentation specialist reviewing previously generated synthetic home-health patient documents.
+A cross-document LLM audit has identified inconsistencies. Your task is to produce a REVISED version of the
+TAP-TAP GAP ANSWERS (tap_tap_gap_answers.json) that resolves these inconsistencies and makes all documents internally consistent.
+
+=== ALL CURRENTLY GENERATED DOCUMENTS ===
+
+--- REFERRAL PACKET (current version — read-only reference) ---
+{referral_text}
+
+--- MEDICATION LIST (current version — read-only reference) ---
+{medication_list_json}
+
+--- AMBIENT SCRIBE NOTE (current version — read-only reference) ---
+{ambient_scribe_text}
+
+--- TAP-TAP GAP ANSWERS (current version — to be revised) ---
+{current_gap_answers_json}
+
+--- OASIS GOLD STANDARD (current version — read-only reference) ---
+{oasis_gold_standard_json}
+
+=== AUDIT FINDINGS — INCONSISTENCIES TO FIX ===
+{audit_conflicts_text}
+
+=== YOUR TASK ===
+Produce a REVISED tap_tap_gap_answers JSON that resolves every inconsistency listed in the audit findings.
+
+MANDATORY CLINICAL RULES — violations will cause dataset rejection:
+
+────────────────────────────────────────────────────────────
+RULE 1 — BIMS ARITHMETIC (C section)
+────────────────────────────────────────────────────────────
+C0500 (BIMS Total) MUST EQUAL EXACTLY the sum:
+  C0200 + C0300A + C0300B + C0300C + C0400A + C0400B + C0400C
+  Valid range: 0–15.
+Exception: if patient was unable/refused BIMS, all C-codes must be "99".
+Do NOT change any BIMS codes unless a BIMS field is explicitly named in the audit findings above.
+
+────────────────────────────────────────────────────────────
+RULE 2 — PHQ-2 SCREENING GATE (CMS mandatory — D section)
+────────────────────────────────────────────────────────────
+Step 1 — Calculate screen score: screen_score = D0150A1 + D0150B1
+Step 2 — If screen_score < 3 (negative screen):
+  • D0150C1, D0150D1, D0150E1, D0150F1, D0150G1, D0150H1, D0150I1 MUST ALL be null (NOT 0)
+  • D0150C2, D0150D2, D0150E2, D0150F2, D0150G2, D0150H2, D0150I2 MUST ALL be null
+  • D0160 = D0150A2 (if A1=1) + D0150B2 (if B1=1) — items C through I excluded from total
+Step 3 — If screen_score >= 3 (positive screen):
+  • Administer all 9 items A through I normally
+  • D0160 = sum of all D0150X2 values where the corresponding D0150X1 = 1
+PHQ_MOOD_INTERVIEW: use "completed" if screen was administered normally, or "99 - Unable to complete"
+Do NOT change any PHQ codes unless a PHQ/D-section field is explicitly named in the audit findings above.
+
+────────────────────────────────────────────────────────────
+RULE 3 — GG DISCHARGE GOAL SCALE (GG0170 items)
+────────────────────────────────────────────────────────────
+GG discharge goal codes represent EXPECTED status at discharge — not current ability.
+Valid coded values: 01=Dependent, 02=Substantial/Maximal assist, 03=Partial/Moderate assist,
+  04=Supervision/touching assist, 05=Setup/cleanup only, 06=Independent
+Exceptions: 07=Refused, 09=Not applicable, 10=Equipment unavailable, 88=Not attempted
+Use coded strings only (e.g. "04", not "04 - Supervision/touching assist").
+
+────────────────────────────────────────────────────────────
+RULE 4 — OUTPUT FORMAT
+────────────────────────────────────────────────────────────
+Preserve the EXACT top-level JSON structure of the current version:
+  • _synthetic_label — keep verbatim
+  • sections — keep all section objects; update only the specific field answers that changed
+  • fields_auto_extracted — preserve or update consistently
+Within each field entry, the output shape must remain:
+  "FIELD_CODE": {{"question": "<verbatim question text>", "answer": "<coded or descriptive value>"}}
+For enum fields, use ONLY valid option codes as the answer (e.g. "2", not "2 - Moderate").
+ONLY alter the specific field answers called out in the audit findings — leave all other fields unchanged.
+
+Output ONLY valid JSON with no markdown fences, no commentary before or after.
+Generate the revised tap_tap_gap_answers.json now:"""
+
+# Step 5 fix — revise oasis_gold_standard.json
+# Placeholders: {referral_text}, {ambient_scribe_text}, {medication_list_json},
+#   {gap_answers_json}, {current_oasis_gold_standard_json}, {audit_conflicts_text}
+OASIS_GOLD_STANDARD_FIX_PROMPT = """\
+You are a clinical documentation specialist reviewing previously generated synthetic home-health patient documents.
+A cross-document LLM audit has identified inconsistencies. Your task is to produce a REVISED version of the
+OASIS GOLD STANDARD (oasis_gold_standard.json) that resolves these inconsistencies and makes all documents internally consistent.
+
+=== ALL CURRENTLY GENERATED DOCUMENTS ===
+
+--- REFERRAL PACKET (current version — read-only reference) ---
+{referral_text}
+
+--- MEDICATION LIST (current version — read-only reference) ---
+{medication_list_json}
+
+--- AMBIENT SCRIBE NOTE (current version — read-only reference) ---
+{ambient_scribe_text}
+
+--- TAP-TAP GAP ANSWERS (current version — read-only reference) ---
+{gap_answers_json}
+
+--- OASIS GOLD STANDARD (current version — to be revised) ---
+{current_oasis_gold_standard_json}
+
+=== AUDIT FINDINGS — INCONSISTENCIES TO FIX ===
+{audit_conflicts_text}
+
+=== YOUR TASK ===
+Produce a REVISED oasis_gold_standard.json that resolves every inconsistency listed in the audit findings.
+
+MANDATORY CLINICAL RULES — violations will cause dataset rejection:
+
+────────────────────────────────────────────────────────────
+RULE 1 — GAP-ANSWERS CODES ARE AUTHORITATIVE
+────────────────────────────────────────────────────────────
+The following code groups MUST be copied verbatim from gap_answers — do NOT change them,
+even if flagged in the audit findings, unless the field is EXPLICITLY listed as a conflict:
+  • All C-section codes (BIMS): C0100, C0200, C0300, C0300A, C0300B, C0300C,
+      C0400, C0400A, C0400B, C0400C, C0500, C1310
+  • All D-section codes (PHQ-9): D0150A1–I1, D0150A2–I2, D0160, PHQ_MOOD_INTERVIEW
+  • All GG0130 (self-care) and GG0170 (mobility) codes — these reflect live clinical assessment
+
+────────────────────────────────────────────────────────────
+RULE 2 — PHQ-2 GATE MUST BE PRESERVED
+────────────────────────────────────────────────────────────
+If gap_answers has D0150A1 + D0150B1 < 3 (negative screen), the gold standard must also have:
+  D0150C1–I1 = null (omitted) and D0150C2–I2 = null (omitted).
+Do not set these to "0" when the screen is negative.
+
+────────────────────────────────────────────────────────────
+RULE 3 — CODED VALUES ONLY
+────────────────────────────────────────────────────────────
+Use valid OASIS coded values as plain strings. Never append descriptions:
+  ✓  "2"     ✗  "2 - Requires assistance"
+  ✓  "06"    ✗  "06=Independent"
+  ✓  "NA"    ✗  "Not applicable"
+Valid GG discharge goal codes: "01" "02" "03" "04" "05" "06" "07" "09" "10" "88"
+Skip items do NOT appear in the output at all — omit rather than setting null.
+
+────────────────────────────────────────────────────────────
+RULE 4 — MULTI-VALUE ITEM FLATTENING
+────────────────────────────────────────────────────────────
+Multi-value items must use the same flattened key format as the current version:
+  Diagnosis list suffix:  M1021, M1023_1, M1023_2, M1023_3
+  Multi-select checkbox:  M1030_1, M1030_2
+  Nested assessment sub:  O0110A1, O0110A2, K0520Z1
+  Height/weight:          M1060A (height inches), M1060B (weight lbs)
+Do not combine these into a parent key.
+
+────────────────────────────────────────────────────────────
+RULE 5 — OUTPUT FORMAT
+────────────────────────────────────────────────────────────
+The output must be a flat JSON object. Every key is a string OASIS item code; every value
+is a plain string. Preserve the "_synthetic_label" key from the current version.
+  {{
+    "_synthetic_label": "SYNTHETIC — NOT REAL PATIENT DATA",
+    "M1021": "I50.9",
+    "M1700": "0",
+    ...
+  }}
+
+ONLY alter the specific field values called out in the audit findings — leave all other
+fields at their current values.
+
+Output ONLY valid JSON with no markdown fences, no commentary before or after.
+Generate the revised oasis_gold_standard.json now:"""
 

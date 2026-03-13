@@ -41,4 +41,4 @@ STEP7_QUEUE: str = "patient_generation.step7"
 # Audit responses contain structured per-field findings; allow generous token budget.
 AUDIT_MAX_TOKENS: int = 6144
 # Number of OASIS fields per LLM audit batch call.
-AUDIT_BATCH_SIZE: int = 30
+AUDIT_BATCH_SIZE: int = 10

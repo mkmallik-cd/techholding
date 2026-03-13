@@ -27,6 +27,10 @@ logger = get_logger(__name__)
 # Keys injected into every artifact — not OASIS fields.
 _SKIP_KEYS = frozenset({"_synthetic_label", "_hip_score"})
 
+# Suffix patterns for metadata annotations added to each gold-standard field.
+# These are supporting annotations, not auditable OASIS values.
+_METADATA_SUFFIXES = ("_CONFIDENCE", "_RATIONALE")
+
 
 def _condense_medication_list(medication_list: dict) -> str:
     """Extract a compact text summary of the medication list for the prompt."""
@@ -106,10 +110,14 @@ class LlmAuditGenerator:
             Audit report dict ready to be serialised as llm_audit_report.json.
         """
         # ── Extract auditable OASIS fields ────────────────────────────────────
+        # Exclude internal keys and per-field metadata annotations (_CONFIDENCE / _RATIONALE)
+        # which are supporting text only and not comparable across documents.
         oasis_fields = {
             k: v
             for k, v in gold_standard.items()
-            if k not in _SKIP_KEYS and not k.startswith("_")
+            if k not in _SKIP_KEYS
+            and not k.startswith("_")
+            and not any(k.endswith(sfx) for sfx in _METADATA_SUFFIXES)
         }
 
         # ── Pre-compute condensed doc summaries (shared across all batches) ───
@@ -145,6 +153,10 @@ class LlmAuditGenerator:
                 medication_list_json=condensed_meds,
                 gap_answers_json=condensed_gaps,
             )
+            
+            if batch_idx > 0:
+                time.sleep(2)
+            
             response = self.bedrock.invoke_json(
                 prompt=prompt,
                 model_id=self._audit_model_id,
@@ -152,8 +164,6 @@ class LlmAuditGenerator:
             )
             batch_findings = self._parse_batch_response(response["text"], batch)
             all_findings.extend(batch_findings)
-            if batch_idx < len(batches) - 1:
-                time.sleep(1)
 
         # ── Assemble final report ─────────────────────────────────────────────
         fields_with_conflicts = [f for f in all_findings if f.get("conflict_detected")]

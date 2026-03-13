@@ -19,17 +19,76 @@ from app.db.session import SessionLocal
 from app.repositories.patient_generation_repository import PatientGenerationRepository
 from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.llm_audit_generator import LlmAuditGenerator
-from app.workers.celery_app import celery_app
+from app.workers.celery_app import celery_app, _STEP2_QUEUE
 
 logger = get_logger(__name__)
+
+_MAX_AUDIT_RETRIES = 3
+
+
+def _extract_audit_context(report_path: str) -> str | None:
+    """Load an llm_audit_report.json and return a formatted conflict summary string.
+
+    Returns ``None`` when the file has no ``conflict_detected=true`` entries so
+    callers can skip injecting context into downstream prompts.
+    """
+    with open(report_path, encoding="utf-8") as fh:
+        report = json.load(fh)
+    conflicts = [
+        entry
+        for entry in report.get("audit_findings", [])
+        if entry.get("conflict_detected")
+    ]
+    if not conflicts:
+        return None
+    lines = ["PREVIOUS AUDIT FOUND INCONSISTENCIES — PLEASE ADDRESS:"]
+    for c in conflicts:
+        lines.append(f"- Field {c['field_code']}: {c['value_reasoning']}")
+    return "\n".join(lines)
+
+
+def _format_audit_conflicts(report_path: str) -> str:
+    """Return a detailed human-readable conflict summary for use in fix prompts.
+
+    Includes the OASIS field code, current recorded value, what each source
+    document says, and the audit's clinical reasoning.  Returns a placeholder
+    message when no conflicts are found (callers should guard on
+    ``audit_status`` before calling this).
+    """
+    with open(report_path, encoding="utf-8") as fh:
+        report = json.load(fh)
+    conflicts = [
+        entry
+        for entry in report.get("audit_findings", [])
+        if entry.get("conflict_detected")
+    ]
+    if not conflicts:
+        return "No conflicts detected in the previous audit."
+    lines = [
+        f"Total conflicts found: {len(conflicts)}\n",
+        "─" * 60,
+    ]
+    for c in conflicts:
+        lines.append(f"\nField: {c['field_code']}")
+        lines.append(f"  Recorded value: {c.get('oasis_value', 'N/A')}")
+        for src in c.get("sources_found", []):
+            consistency_flag = "✓ consistent" if src.get("consistent") else "✗ INCONSISTENT"
+            lines.append(
+                f"  [{src.get('document', '?')}] supports={src.get('value_supported', '?')} — {consistency_flag}"
+            )
+            if src.get("excerpt"):
+                lines.append(f"    Excerpt: \"{src['excerpt'][:200]}\"")
+        lines.append(f"  Reasoning: {c.get('value_reasoning', '')}")
+        lines.append("─" * 60)
+    return "\n".join(lines)
 
 
 @celery_app.task(
     bind=True,
     name="workers.patient_generation.run_llm_audit",
     # LLM audit makes multiple Bedrock calls; allow up to 16 minutes.
-    time_limit=960,
-    soft_time_limit=900,
+    time_limit=3600,
+    soft_time_limit=3300,
     # Retry only on transient infrastructure failures (DB/disk/network), not LLM errors.
     autoretry_for=(OSError, IOError),
     retry_backoff=True,
@@ -134,21 +193,68 @@ def run_llm_audit(self, *, job_id: str) -> None:
             audit_report=audit_report,
         )
 
-        # ── Mark job completed ────────────────────────────────────────────────
-        repo.mark_completed(
-            job,
-            artifact_path=artifact_path,
-            result_payload={
-                **metadata,
-                "llm_audit_report_path": artifact_path + "/llm_audit_report.json",
-            },
-        )
-        logger.info(
-            "Step 8 completed: job_id=%s patient=%s audit_status=%s",
-            job_id,
-            job.patient_external_id,
-            audit_report.get("audit_status"),
-        )
+        # ── Decide next action based on audit result ──────────────────────
+        updated_payload = {
+            **metadata,
+            "llm_audit_report_path": artifact_path + "/llm_audit_report.json",
+        }
+
+        if audit_report.get("audit_status") == "conflicts_found" and (job.repair_attempt or 0) < _MAX_AUDIT_RETRIES:
+            # Increment retry counter and re-run from Step 2 with audit context.
+            repo.increment_repair_attempt(job)
+            retry_num = job.repair_attempt
+            repo.advance_to_next_step(
+                job,
+                next_phase="step2_referral_packet",
+                step_result_payload=updated_payload,
+                step_artifact_path=artifact_path,
+            )
+            logger.warning(
+                "Step 8 CONFLICTS FOUND (retry %d/%d) — re-running from Step 2:"
+                " job_id=%s patient=%s conflicts=%d",
+                retry_num,
+                _MAX_AUDIT_RETRIES,
+                job_id,
+                job.patient_external_id,
+                audit_report.get("fields_with_conflicts", 0),
+            )
+            # Deferred import to avoid circular dependency (referral_packet_tasks → celery_app ← llm_audit_tasks)
+            from app.workers.tasks.referral_packet_tasks import generate_referral_packet
+            generate_referral_packet.apply_async(
+                kwargs={"job_id": job_id, "is_audit_fix": True},
+                queue=_STEP2_QUEUE,
+                routing_key=_STEP2_QUEUE,
+            )
+        elif audit_report.get("audit_status") == "conflicts_found":
+            # All retries exhausted — complete with issues flagged.
+            repo.mark_completed(
+                job,
+                artifact_path=artifact_path,
+                result_payload={
+                    **updated_payload,
+                    "llm_audit_final_status": "completed_with_issues",
+                },
+            )
+            logger.warning(
+                "Step 8 completed with issues (all %d retries exhausted):"
+                " job_id=%s patient=%s conflicts=%d",
+                _MAX_AUDIT_RETRIES,
+                job_id,
+                job.patient_external_id,
+                audit_report.get("fields_with_conflicts", 0),
+            )
+        else:
+            repo.mark_completed(
+                job,
+                artifact_path=artifact_path,
+                result_payload=updated_payload,
+            )
+            logger.info(
+                "Step 8 completed: job_id=%s patient=%s audit_status=%s",
+                job_id,
+                job.patient_external_id,
+                audit_report.get("audit_status"),
+            )
 
     except Exception as exc:
         logger.error("Step 8 task failed: job_id=%s error=%s", job_id, exc, exc_info=True)

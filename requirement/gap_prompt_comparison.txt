@@ -1,0 +1,600 @@
+﻿GAP PROMPT REVISION 
+
+GAP_FILTER_PROMPT_TEMPLATE  +  GAP_ANSWER_PROMPT_TEMPLATE 
+
+tap_tap_gap_answers.json Generation — Bugs Fixed, Rules Hardened 
+
+OAPI Phase A  ·  prompts.py  ·  Step 4 
+
+ 
+
+Metric Value 
+
+Root cause GAP_ANSWER_PROMPT_TEMPLATE 
+allows non-OASIS EHR narrative codes and 
+contains broken arithmetic rules 
+
+Files affected tap_tap_gap_answers.json → 
+oasis_gold_standard.json (cascades 
+downstream) 
+
+Bugs in current filter 2 
+prompt 
+
+Bugs in current answer 6 (4 structural, 2 arithmetic) 
+prompt 
+
+Total confirmed wrong 53 non-OASIS + 3 arithmetic errors + 2 N0415 
+fields in SYN_0001 flags 
+
+New placeholder added {medication_json} — required for deterministic 
+N0415 derivation 
+
+Lines changed (filter) ~5 lines hardened 
+
+Lines changed (answer) ~80 lines rewritten 
+
+  
+
+
+
+1. Root Cause Analysis 
+The gold standard file (oasis_gold_standard.json) explicitly states it uses tap_tap_gap_answers.json as its 
+authoritative source. Any error in the gap file propagates directly into the gold standard, which is the training signal 
+for the OAPI optimizer. Three independent bug categories were identified. 
+
+ 
+
+# Category Effect Severity 
+
+BUG-1 53 non-OASIS EHR Pipeline can't match these keys — CRITICAL — data loss 
+narrative codes silently drops 53 training slots. Prompt 
+present item 5 ('Non-OASIS narrative codes') is 
+
+the direct cause. 
+
+BUG-2 Generic GG0130 / 14 GG questions lack sub-item suffix CRITICAL — wrong 
+GG0170 root codes (A1, C2, etc.). Gold standard can't map training signal 
+used activity-specific answers — produces 
+
+wrong or missing GG values. 
+
+BUG-3 Generic GG0110 root Device/aid flags written as single code HIGH 
+code used GG0110 instead of GG0110A–GG0110F 
+
+sub-codes. Gold standard receives one 
+value for 6 fields. 
+
+BUG-4 Generic N0415 root N0415 written as array of strings instead CRITICAL — wrong 
+code used with array of N0415A–N0415I binary flags. Gold training signal 
+answer standard interprets incorrectly → all 
+
+N0415 sub-fields wrong. 
+
+BUG-5 PHQ D0160 screen=2 (negative), but D0160=4 in HIGH — arithmetic 
+computed ignoring gap file instead of 2. Gold standard violation 
+PHQ-2 gate imports the wrong total — H-5 
+
+mismatch. 
+
+BUG-6 C0400 grouping code C0400A+B+C = 6 but C0400 = 5 in gap HIGH — arithmetic 
+set independently of answers. Two-level BIMS arithmetic violation 
+sub-scores broken at source. 
+
+  
+
+
+
+2. GAP_FILTER_PROMPT_TEMPLATE — Changes 
+The filter prompt's job is to identify which OASIS codes are already answerable from documents. It had two gaps 
+that allowed invalid codes to pass through into the answer phase. 
+
+ 
+
+Field / Status What Changed & Why OLD NEW 
+Rule 
+
+PHQ TIGHTENED Added explicit exclusion of D0150A1 through D0150A1 through 
+
+exclusion root D0150A1–D0150I2 and D0150I2, D0160, D0150I2, D0160 
+
+D0160. Old prompt only said PHQ_MOOD_INTERVIEW (PHQ_MOOD_INTERVIEW 
+removed — not an OASIS 
+
+'PHQ mood codes' which 
+code) 
+
+the LLM sometimes 
+interpreted loosely. 
+
+GG root FIXED Old rule said 'NEVER NEVER include NEVER include root 
+
+codes include GG discharge goal GG0100, GG0110, codes GG0130 or GG0170 
+
+codes (GG0100, GG0110, GG0130, GG0170, without full sub-item 
+GG0170C suffix (letter+digit) 
+
+GG0130, GG0170, 
+GG0170C)' — this listed root 
+codes but didn't prevent the 
+LLM from outputting them as 
+answerable. New rule 
+explicitly bans root codes 
+without full sub-item suffix. 
+
+Non-OASIS ADDED No rule existed to prevent (absent) Return ONLY real 
+
+gate the filter from returning EHR OASIS-E1 item codes — 
+
+narrative codes like codes like ALLERGIES, 
+VITAL_SIGNS, 
+
+ALLERGIES, 
+CIRCULATORY_HISTORY... 
+
+CIRCULATORY_HISTORY, must NEVER appear 
+etc. Added explicit hard 
+prohibition. 
+
+ 
+
+Side-by-Side: Filter Prompt 
+ 
+
+❌  CURRENT (BUGGY) ✅  CORRECTED 
+
+RULES: RULES: 
+- Return ONLY clearly answerable codes - Return ONLY clearly answerable codes 
+- NEVER include BIMS codes (C0100 … C1310) - NEVER include BIMS codes (C0100 … C1310) 
+- NEVER include PHQ mood codes (D0150A1 … - NEVER include PHQ mood codes (D0150A1 … 
+D0150I2, D0150I2, 
+  D0160, PHQ_MOOD_INTERVIEW)   D0160)  ← PHQ_MOOD_INTERVIEW removed 
+- NEVER include GG discharge goal codes - NEVER include GG discharge goal codes ending in 2 
+  (GG0100, GG0110, GG0130, GG0170, GG0170C)   (e.g. GG0130A2, GG0170C2) 
+
+ - NEVER include root GG0130 or GG0170 without 
+suffix 
+
+❌ No rule blocking EHR narrative codes 
+❌ LLM allowed to return ALLERGIES, SKIN, etc.  
+
+✅ Hard prohibition on all non-OASIS keys: 
+  'Return ONLY real OASIS-E1 item codes — 
+   codes like ALLERGIES, CIRCULATORY_HISTORY, 
+   MENTAL_STATUS... must NEVER appear' 
+
+  
+
+
+
+3. GAP_ANSWER_PROMPT_TEMPLATE — All Changes 
+ 
+
+Section / Rule Status What Changed & Why OLD NEW 
+
+Scope rule ADDED No upfront scope constraint existed. LLM (absent) ⚠️ CRITICAL 
+
+(preamble) freely generated non-OASIS narrative codes. SCOPE RULE 
+
+New CRITICAL SCOPE RULE block at top of block — lists 
+15+ example 
+
+prompt explicitly lists banned code patterns 
+banned codes, 
+
+and states 'skip it entirely' for any such field. instruction to 
+omit non-OASIS 
+fields entirely 
+from output 
+
+{medication_ ADDED N0415 flags require reading (placeholder --- MEDICATION 
+
+json} medication_list.json. Old prompt had no absent) LIST (use this 
+
+medication context — LLM guessed from to derive N0415 
+flags) --- 
+
+narrative and got Warfarin/Digoxin flags 
+{medication_jso
+
+wrong. New placeholder passes the full n} 
+medication JSON. 
+
+BIMS — FIXED Old RULE 1 told LLM to compute C0500 = C0500 MUST EQUAL Step A: C0300 = 
+
+C0300/C0400 C0200+C0300A+C0300B+C0300C+C0400A+ EXACTLY: C0300A+C0300B+C
+
+C0400B+C0400C directly, bypassing the two C0200+C0300A+C0300 0300C Step B: 
+B+C0300C C0400 = 
+
+grouping codes. LLM set C0400=5 while 
++C0400A+C0400B+C04 C0400A+C0400B+C
+
+C0400A+B+C=6. New rule enforces two-step 00C 0400C Step C: 
+arithmetic: first derive C0300 and C0400 from C0500 = 
+sub-codes, then C0500 = C0200+C0300+C04
+
+C0200+C0300+C0400. 00 
+
+PHQ D0160 FIXED Old RULE 2 described the gate correctly but D0160 = D0150A2 D0160 = 
+
+formula the D0160 formula for negative screen was (if A1=1) + (D0150A2 if 
+
+ambiguous. LLM computed D0160=4 when D0150B2 (if B1=1) D0150A1=1 else 
+ONLY — items C 0) + (D0150B2 
+
+screen=2. New rule uses explicit conditional 
+through I excluded if D0150B1=1 
+
+formula with worked example showing else 0) With 
+D0160=A2+B2 on negative screen. worked example: 
+
+A1=1,A2=2,B1=1,
+B2=1 → screen=2 
+→ D0160=3 
+
+GG0130 sub- FIXED Old RULE 3 listed GG0170 sub-codes for GG Discharge Goals RULE 3: NEVER 
+
+codes discharge goals but GG0130 self-care items (GG0170 items — output GG0130 
+
+had no explicit sub-code expansion. LLM MANDATORY) or GG0170 root 
+codes. Full 
+
+used generic GG0130 for Dressing 
+enumeration: 
+
+Upper/Lower Body. New rule enumerates all GG0130A1/A2=Eat
+GG0130 sub-items A1–G2 with activity ing, B1/B2=Oral 
+names. Hygiene, 
+
+C1/C2=Shower, 
+D1/D2=Upper 
+Dress, 
+E1/E2=Lower 
+Dress, 
+F1/F2=Toileting
+, G1/G2=Oral 
+Hygiene 
+
+GG0170 sub- TIGHTE Old RULE 3 was discharge-goal-only for Scale only: Full 
+
+codes NED GG0170. New rule enumerates all 16 mobility 01=Dependent … enumeration: 
+
+activities with both admission (X1) and 88=Not attempted A1/A2=Roll 
+Left/Right 
+
+discharge goal (X2) codes, plus GG0170RR1 
+through 
+
+as admission-only special case. P1/P2=Picking 
+Up Object, plus 
+GG0170RR1 
+(Wheel 50ft, 
+admission only) 
+
+GG0110 sub- ADDED GG0110 (prior devices) had no expansion (absent — GG0110 RULE 5: 
+
+codes rule. LLM wrote GG0110 as a single root undefined) GG0110A=Cane/Cr
+
+
+
+code. New RULE 5 enumerates GG0110A– utch, B=Walker, 
+
+GG0110F with 0=No/1=Yes semantics. C=Wheelchair, 
+D=Prosthetics, 
+E=None of 
+above, F=Other 
+
+N0415 sub- FIXED Old prompt item 5 permitted non-OASIS N0415: (no rule — RULE 6: derive 
+
+codes narrative codes and had no N0415 rule. LLM generated as array N0415A–N0415I 
+
+wrote N0415 as array of strings. New RULE 6 of drug names) as 0/1 flags 
+from 
+
+derives each A–I flag deterministically from 
+medication_json 
+
+medication_json, with explicit is_high_risk 
+medication→flag mapping table. fields. 
+
+Anticoagulant→N
+0415B, 
+Digoxin→N0415F, 
+Insulin→N0415E, 
+Opioid→N0415H, 
+etc. 
+
+Non-OASIS REMOV Old item 5 'Non-OASIS narrative codes 5. Non-OASIS (removed 
+
+item 5 ED (ALLERGIES, VITAL_SIGNS, narrative codes entirely) 
+ACTIVITIES_PERMITTED, etc.): Use (ALLERGIES, 
+
+VITAL_SIGNS, 
+descriptive string answers' is the direct cause 
+
+ACTIVITIES_PERMITT
+of 53 invalid fields. Entirely removed. ED, etc.): Use 
+
+descriptive string 
+answers consistent 
+with archetype. 
+
+Output TIGHTE Old instruction said 'Every field code in the list Every field code Every OASIS-E1 
+
+instruction NED MUST have an entry'. New instruction adds in the list MUST field code MUST 
+
+'Non-OASIS codes must be omitted entirely have an entry in have an entry. 
+the output. Non-OASIS codes 
+
+— do not include them with null answers' to 
+must be omitted 
+
+prevent LLM from padding output with invalid entirely — do 
+keys. not include 
+
+them with null 
+answers. 
+
+  
+
+
+
+4. Arithmetic Rules — Before vs. After 
+Three sets of calculated fields must follow strict arithmetic. The current prompt gets all three wrong in ways that 
+cascade into the gold standard. 
+
+ 
+
+4.1  BIMS Two-Level Arithmetic 
+
+❌  OLD — Single-pass formula ✅  NEW — Two-step derivation 
+
+  
+
+C0500 MUST EQUAL EXACTLY: Step A:  C0300 = C0300A + C0300B + C0300C 
+
+C0200 + C0300A + C0300B + C0300C          (range 0–6) 
+
++ C0400A + C0400B + C0400C Step B:  C0400 = C0400A + C0400B + C0400C 
+
+          (range 0–6) 
+
+Problem: Skips deriving C0300 and C0400 first. Step C:  C0500 = C0200 + C0300 + C0400 
+
+LLM sets C0400 independently → C0400=5          (range 0–15, BIMS Total) 
+
+while C0400A+B+C = 6.  Inconsistent.  
+
+C0500 appears correct only because LLM C0300 and C0400 are DERIVED — do NOT 
+
+happens to add sub-codes directly. set them independently. 
+
+ 
+
+4.2  PHQ-2 Gate — D0160 Formula 
+
+❌  OLD — Ambiguous formula ✅  NEW — Explicit conditional with example 
+
+  
+
+D0160 = D0150A2 (if A1=1) + D0150B2 (if D0160 = (D0150A2 if D0150A1=1 else 0) 
+B1=1) 
+
+ONLY — items C through I excluded        + (D0150B2 if D0150B1=1 else 0) 
+
+  
+
+Result for SYN_0001: Worked example (screen negative): 
+
+screen=2 (negative), A2=1, B2=1 A1=1, A2=2, B1=1, B2=1 → screen=2 
+
+Correct D0160 = 2 D0160 = A2(2) + B2(1) = 3 
+
+gap_answers generated D0160 = 4  ❌  
+
+(LLM summed extra frequency values) NEVER include frequencies for items 
+
+ C–I when screen_score < 3. 
+
+  
+
+
+
+5. N0415 High-Risk Medication Flags — Old vs. New 
+This is the highest-impact change. Previously the prompt had no N0415 rule at all, and permitted narrative codes — 
+so the LLM wrote N0415 as an array of drug names. The corrected prompt replaces this with a deterministic lookup 
+table driven by medication_list.json. 
+
+ 
+
+❌  CURRENT OUTPUT (SYN_0001) ✅  CORRECTED OUTPUT 
+
+  
+
+// In tap_tap_gap_answers.json: // In tap_tap_gap_answers.json: 
+
+{ { "N0415A": "0" },  // no antipsychotic 
+
+  "id": "n0415", { "N0415B": "1" },  // ✅ Warfarin 
+
+  "field_codes": ["N0415"], { "N0415C": "0" },  // no antibiotic 
+
+  "answer": ["Anticoagulant - { "N0415D": "0" },  // no antiplatelet 
+Warfarin", "Digoxin"] 
+
+} { "N0415E": "0" },  // no insulin here 
+
+ { "N0415F": "1" },  // ✅ Digoxin 
+
+// In oasis_gold_standard.json: { "N0415G": "1" },  // Furosemide 
+
+"N0415E": "0",  // ❌ anticoagulant { "N0415H": "0" },  // no opioid 
+missing 
+
+"N0415F": "0",  // ❌ digoxin missing { "N0415I": "0" }   // not "none" 
+
+ 
+
+N0415 Mapping Table (new RULE 6) 
+
+Code Drug Class Triggered by (read from medication_json is_high_risk=true) 
+
+N0415A Antipsychotic haloperidol, quetiapine, risperidone, olanzapine, 
+aripiprazole 
+
+N0415B Anticoagulant warfarin, apixaban, rivaroxaban, dabigatran, 
+enoxaparin, heparin (NOT aspirin/clopidogrel) 
+
+N0415C Antibiotic any systemic antibiotic (amoxicillin, ciprofloxacin, 
+vancomycin, etc.) 
+
+N0415D Antiplatelet aspirin ≥325 mg, clopidogrel, ticagrelor, prasugrel 
+
+N0415E Hypoglycemic any insulin, metformin, glipizide, sitagliptin, 
+empagliflozin, etc. 
+
+N0415F Cardiovascular digoxin, amiodarone, flecainide, sotalol, dronedarone 
+(narrow TI agents) 
+
+N0415G Diuretic furosemide, torsemide, bumetanide, hydrochlorothiazide, 
+chlorthalidone 
+
+N0415H Opioid oxycodone, morphine, hydromorphone, fentanyl, tramadol, 
+codeine, buprenorphine 
+
+N0415I None of above Set '1' ONLY if ALL of N0415A–N0415H are '0' 
+
+  
+
+
+
+6. GG Sub-Code Expansion — Before vs. After 
+The current gap file has 14 occurrences of generic root codes (GG0130, GG0170, GG0110) without sub-item 
+suffixes. The gold standard cannot map these to specific activities. The corrected prompt fully enumerates all 
+required sub-codes. 
+
+ 
+
+Root Code Used Should Be Activity (admission X1) Discharge Goal (X2) 
+
+GG0130 (×2) GG0130D1 / Upper Body Dressing / Lower GG0130D2 / GG0130E2 
+GG0130E1 Body Dressing 
+
+GG0110 GG0110A–GG0110F Cane, Walker, Wheelchair, (each 0/1 flag, no discharge 
+Prosthetics, None, Other goal) 
+
+GG0170 (×10) GG0170A1– Roll L/R, Sit↔Lie, GG0170A2–GG0170P2 (no 
+GG0170P1 + Lying→Sitting, Sit→Stand, RR2) 
+GG0170RR1 Chair Transfer, Toilet Transfer, 
+
+Car Transfer, Walk 10/50/150ft, 
+Uneven Surface, 1/4/12 Steps, 
+Pickup, Wheel 
+
+GG0170C GG0170C1 / Lying to Sitting on Side of Bed GG0170C2 
+GG0170C2 
+
+  
+
+
+
+7. Implementation Notes 
+ 
+
+7.1  New Placeholder {medication_json} 
+The corrected GAP_ANSWER_PROMPT_TEMPLATE adds one new required placeholder. Your pipeline code 
+must be updated to pass it. 
+
+ 
+# OLD call site (pseudo-code) 
+prompt = GAP_ANSWER_PROMPT_TEMPLATE.format( 
+    archetype=archetype, 
+    diagnosis_context=diagnosis_context, 
+    has_ambient_scribe=has_ambient_scribe, 
+    referral_text=referral_text, 
+    scribe_section=scribe_section, 
+    fields_with_metadata_json=fields_with_metadata_json, 
+) 
+
+ 
+# NEW call site — add medication_json 
+import json 
+med_json_str = json.dumps(medication_list_dict, indent=2) 
+ 
+prompt = GAP_ANSWER_PROMPT_TEMPLATE.format( 
+    archetype=archetype, 
+    diagnosis_context=diagnosis_context, 
+    has_ambient_scribe=has_ambient_scribe, 
+    referral_text=referral_text, 
+    scribe_section=scribe_section, 
+    medication_json=med_json_str,       # ← NEW 
+    fields_with_metadata_json=fields_with_metadata_json, 
+) 
+
+ 
+
+7.2  Recommended Post-Processing Validation 
+The arithmetic rules (BIMS, PHQ-2) are safety-critical. Even with the corrected prompt, a post-processing validator 
+in Python is strongly recommended as a backstop. The LLM output should be checked before saving. 
+
+ 
+def validate_gap_answers(answers: dict) -> list[str]: 
+    errors = [] 
+    # BIMS two-level arithmetic 
+    if all(k in answers for k in ['C0300A','C0300B','C0300C','C0300']): 
+        expected = int(answers['C0300A']) + int(answers['C0300B']) + int(answers['C0300C']) 
+        if int(answers['C0300']) != expected: 
+            errors.append(f'C0300={answers["C0300"]} but sub-sum={expected}') 
+    if all(k in answers for k in ['C0400A','C0400B','C0400C','C0400']): 
+        expected = int(answers['C0400A']) + int(answers['C0400B']) + int(answers['C0400C']) 
+        if int(answers['C0400']) != expected: 
+            errors.append(f'C0400={answers["C0400"]} but sub-sum={expected}') 
+    if all(k in answers for k in ['C0200','C0300','C0400','C0500']): 
+        expected = int(answers['C0200']) + int(answers['C0300']) + int(answers['C0400']) 
+        if int(answers['C0500']) != expected: 
+            errors.append(f'C0500={answers["C0500"]} but C0200+C0300+C0400={expected}') 
+    # PHQ-2 gate 
+    a1 = int(answers.get('D0150A1', 0)) 
+    b1 = int(answers.get('D0150B1', 0)) 
+
+
+
+    if a1 + b1 < 3: 
+        for letter in 'CDEFGHI': 
+            for col in ['1','2']: 
+                if answers.get(f'D0150{letter}{col}') is not None: 
+                    errors.append(f'D0150{letter}{col} must be null on negative PHQ-2 
+screen') 
+        a2 = int(answers.get('D0150A2', 0)) if a1 == 1 else 0 
+        b2 = int(answers.get('D0150B2', 0)) if b1 == 1 else 0 
+        expected_d0160 = a2 + b2 
+        if str(answers.get('D0160')) != str(expected_d0160): 
+            errors.append(f'D0160={answers["D0160"]} but should be {expected_d0160}') 
+    return errors 
+
+ 
+
+7.3  What This Does NOT Fix 
+These corrections fix the gap prompt only. The gold standard prompt (OASIS_GOLD_STANDARD_PROMPT) also 
+has issues — specifically A1010 field misuse and PHQ_MOOD_INTERVIEW being written into the gold standard. 
+Those will be addressed separately in the next revision. 
+
+ 
+
+✅  Fixed by this revision ⏳  Still needs fixing (gold standard prompt) 
+
+• 53 non-OASIS EHR codes removed from gap file • A1010 field definition error (gold standard) 
+• GG0130 sub-codes fully enumerated (A1–G2) • PHQ_MOOD_INTERVIEW key in gold standard 
+• GG0170 sub-codes fully enumerated (A1–P2, RR1) • N0415 sub-code propagation into gold standard 
+• GG0110 sub-codes enumerated (A–F) • Gold standard GG discharge goal propagation 
+• N0415 now derived deterministically from med JSON • metadata.json validation_status field 
+• BIMS two-level arithmetic enforced in prompt • Physician NPI fictional-range enforcement 
+• PHQ D0160 formula corrected with worked example 
+• PHQ_MOOD_INTERVIEW removed from gap 
+answers 
+
+ 
+
+Next step: apply the corrected prompts, re-generate SYN_0001 gap answers, then re-run the platform validation 
+report to confirm all CRITICAL and HIGH issues are resolved before moving to the gold standard prompt revision.

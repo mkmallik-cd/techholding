@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 BASE = "http://localhost:8081/api/v1/patient-generation"
-PATIENT_ID = "SYN_0004"
+PATIENT_ID = "SYN_0005"
 MAX_WAIT = 900  # 15 minutes — allow for up to 3 repair cycles
 
 
@@ -20,7 +20,7 @@ def enqueue(patient_id: str) -> str:
     payload = json.dumps({
         "patient_external_id": patient_id,
         "model_id": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        "perform_llm_audit": False,
+        "perform_llm_audit": True,
         "hardcoded_seed": patient_id
     }).encode()
     req = urllib.request.Request(
@@ -173,8 +173,8 @@ def main() -> int:
         ("metadata.json",          lambda p: json.load(open(p)).get("archetype")),
         ("referral_packet.txt",    lambda p: len(open(p).read()) > 200),
         ("medication_list.json",   lambda p: "hospital_discharge_list" in json.load(open(p))),
-        ("tap_tap_gap_answers.json",  lambda p: "unanswered_response" in json.load(open(p))),
-        ("oasis_gold_standard.json",  lambda p: "items" in json.load(open(p))),
+        ("tap_tap_gap_answers.json",  lambda p: "sections" in json.load(open(p))),
+        ("oasis_gold_standard.json",  lambda p: "_synthetic_label" in json.load(open(p)) and len(json.load(open(p))) > 5),
         ("validation_report.json",    lambda p: "status" in json.load(open(p))),
     ]
 

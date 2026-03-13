@@ -111,6 +111,10 @@ class BedrockClient:
                     max_tokens=max_tokens,
                     start_time=start_time,
                 )
+                # 1-second courtesy pause between consecutive LLM calls to avoid
+                # hitting Bedrock rate limits when multiple calls are made in quick
+                # succession within a single pipeline step.
+                time.sleep(1)
                 return {"text": text, "raw": response.response_metadata}
 
             except Exception as exc:
