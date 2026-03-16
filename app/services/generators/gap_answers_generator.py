@@ -57,6 +57,7 @@ from app.config.constants import (
     BIMS_MANDATORY,
     BIMS_SUB_CODES,
     BIMS_TOTAL_CODE,
+    GAP_ANSWER_SECTION_GROUPS,
     GG_MANDATORY,
     PHASE3_BATCH_SIZE,
     PHQ_FREQUENCY_CODES,
@@ -66,9 +67,20 @@ from app.config.constants import (
 )
 from app.config.oasis_field_map import OASIS_FIELD_MAP
 from app.services.llm.bedrock_client import BedrockClient
-from app.config.prompts import GAP_ANSWER_PROMPT_TEMPLATE, GAP_FILTER_PROMPT_TEMPLATE
+from app.config.prompts import (
+    GAP_ANSWER_PROMPT_TEMPLATE,
+    GAP_BIMS_SECTION_PROMPT,
+    GAP_FILTER_PROMPT_TEMPLATE,
+    GAP_GG_MOBILITY_SECTION_PROMPT,
+    GAP_GG_SELF_CARE_SECTION_PROMPT,
+    GAP_MCODES_SECTION_PROMPT,
+    GAP_N0415_SECTION_PROMPT,
+    GAP_PHQ_SECTION_PROMPT,
+    GAP_SECTION_FIX_PROMPT,
+)
 from app.utils.json_utils import extract_json_object, repair_truncated_json
 from app.utils.logger import get_logger
+from app.utils.oasis_validators import validate_batch
 
 logger = get_logger(__name__)
 
@@ -331,6 +343,9 @@ class GapAnswersGenerator:
         )
 
         # Post-validate and fix BIMS arithmetic (C0500 = sum of sub-scores)
+        # NOTE: arithmetic corrections are now also applied per-section in Phase 3,
+        # but we keep this pass as a final safety net in case the BIMS codes were
+        # spread across multiple batches or handled by the legacy monolithic path.
         unanswered_response = self._validate_and_fix_bims(unanswered_response)
         # Post-validate and fix PHQ-9 total (D0160 = sum of Column 2 frequencies)
         unanswered_response = self._validate_and_fix_phq(unanswered_response)
@@ -397,7 +412,28 @@ class GapAnswersGenerator:
                 remaining.append(code)
                 seen.add(code)
 
+        # Safety-net: strip any non-OASIS narrative keys that slipped through.
+        # Valid OASIS codes never contain an underscore; EHR narrative keys always do.
+        before = len(remaining)
+        remaining = self._sanitize_remaining_codes(remaining)
+        stripped = before - len(remaining)
+        if stripped:
+            logger.warning(
+                "Step 4 Phase 2 sanitize: dropped %d non-OASIS narrative codes from remaining",
+                stripped,
+            )
+
         return remaining
+
+    @staticmethod
+    def _sanitize_remaining_codes(codes: list[str]) -> list[str]:
+        """Remove any non-OASIS EHR narrative keys from the remaining-codes list.
+
+        Real OASIS-E1 item codes never contain an underscore character.  Any code
+        with an underscore (e.g. CARDIOVASCULAR_PROBLEMS, PHQ_MOOD_INTERVIEW) is
+        an EHR narrative descriptor that must not appear in gap_answers output.
+        """
+        return [c for c in codes if "_" not in c]
 
     def _generate_answers(
         self,
@@ -425,27 +461,55 @@ class GapAnswersGenerator:
             else "(No ambient scribe — use referral packet for all clinical context)"
         )
 
-        # Split codes into batches to stay within LLM output size limits (~50 per call)
-        batches = [
-            remaining_codes[i : i + PHASE3_BATCH_SIZE]
-            for i in range(0, len(remaining_codes), PHASE3_BATCH_SIZE)
+        # ── Phase 3a: Fixed mandatory sections (BIMS / PHQ / GG / N0415) ─────
+        # Each clinical section gets its own focused prompt + validate→fix loop.
+        result: dict = {}
+        remaining_set = set(remaining_codes)
+
+        for section_name, section_codes in GAP_ANSWER_SECTION_GROUPS:
+            # Only process codes that are actually in remaining_codes
+            batch = [c for c in section_codes if c in remaining_set]
+            if not batch:
+                continue
+            logger.info(
+                "Step 4 Phase 3: section=%s (%d codes)", section_name, len(batch)
+            )
+            section_result = self._generate_and_fix_section(
+                section_name=section_name,
+                batch=batch,
+                archetype=archetype,
+                diagnosis_context=diagnosis_context,
+                scribe_section=scribe_section,
+                referral_text=referral_text,
+                medication_list=medication_list,
+                model_id=model_id,
+                audit_context=audit_context,
+            )
+            result.update(section_result)
+            # Mark these codes as handled
+            remaining_set -= set(batch)
+
+        # ── Phase 3b: Dynamic M-code batches (chunked at PHASE3_BATCH_SIZE) ───
+        m_codes = [c for c in remaining_codes if c in remaining_set]
+        m_batches = [
+            m_codes[i : i + PHASE3_BATCH_SIZE]
+            for i in range(0, len(m_codes), PHASE3_BATCH_SIZE)
         ]
         logger.info(
-            "Step 4 Phase 3: processing %d codes in %d batch(es), archetype=%s",
-            len(remaining_codes),
-            len(batches),
+            "Step 4 Phase 3: %d M-code batches (%d codes total), archetype=%s",
+            len(m_batches),
+            len(m_codes),
             archetype,
         )
-
-        result: dict = {}
-        for batch_idx, batch in enumerate(batches):
+        for batch_idx, batch in enumerate(m_batches):
             logger.info(
-                "Step 4 Phase 3: batch %d/%d (%d codes)",
+                "Step 4 Phase 3: m_codes batch %d/%d (%d codes)",
                 batch_idx + 1,
-                len(batches),
+                len(m_batches),
                 len(batch),
             )
-            batch_result = self._generate_answers_batch(
+            batch_result = self._generate_and_fix_section(
+                section_name="m_codes",
                 batch=batch,
                 archetype=archetype,
                 diagnosis_context=diagnosis_context,
@@ -467,6 +531,93 @@ class GapAnswersGenerator:
 
         return result
 
+    def _generate_and_fix_section(
+        self,
+        *,
+        section_name: str,
+        batch: list[str],
+        archetype: str,
+        diagnosis_context: str,
+        scribe_section: str,
+        referral_text: str,
+        medication_list: dict | None = None,
+        model_id: str,
+        audit_context: str | None = None,
+    ) -> dict:
+        """Generate answers for one clinical section then validate and fix if needed.
+
+        Implements the Generate → Validate → Fix loop:
+          1. LLM call with section-specific prompt.
+          2. Python validators check the result.
+          3. If violations found, one LLM fix call merges corrections.
+
+        Returns a flat dict keyed {code: {question, answer}}.
+        """
+        raw = self._generate_answers_batch(
+            batch=batch,
+            archetype=archetype,
+            diagnosis_context=diagnosis_context,
+            scribe_section=scribe_section,
+            referral_text=referral_text,
+            medication_list=medication_list,
+            model_id=model_id,
+            audit_context=audit_context,
+            section_name=section_name,
+        )
+
+        # Build a flat {code: answer_value} dict for the validator
+        flat = {code: entry.get("answer") for code, entry in raw.items() if isinstance(entry, dict)}
+
+        violations = validate_batch(flat, section_name)
+        if not violations:
+            return raw
+
+        # ── Fix pass ──────────────────────────────────────────────────────────
+        logger.warning(
+            "Step 4 section=%s: %d violation(s) found — running fix pass",
+            section_name,
+            len(violations),
+        )
+        medication_json = json.dumps(medication_list, indent=2) if medication_list else "(No medication data)"
+        fix_prompt = GAP_SECTION_FIX_PROMPT.format(
+            section_name=section_name,
+            violations_list="\n".join(f"- {v}" for v in violations),
+            original_answers_json=json.dumps(flat, indent=2),
+            archetype=archetype,
+            diagnosis_context=diagnosis_context,
+            medication_json=medication_json,
+            referral_text=referral_text[:3000],
+            scribe_section=scribe_section[:2000],
+        )
+        try:
+            fix_response = self.bedrock.invoke_json(
+                prompt=fix_prompt,
+                model_id=model_id,
+                max_tokens=2048,
+            )
+            fix_raw = json.loads(extract_json_object(fix_response["text"].strip()))
+        except Exception as exc:
+            logger.error("Step 4 section=%s fix parse failed (%s) — keeping original", section_name, exc)
+            return raw
+
+        if not isinstance(fix_raw, dict):
+            return raw
+
+        # Merge corrections back into raw (patch answer values only)
+        for code, corrected_value in fix_raw.items():
+            code_upper = code.strip().upper()
+            if code_upper in raw:
+                raw[code_upper]["answer"] = corrected_value
+            else:
+                # New code added by fix (e.g. N0415 completeness fix)
+                meta = OASIS_FIELD_MAP.get(code_upper)
+                raw[code_upper] = {
+                    "question": meta["question"] if meta else code_upper,
+                    "answer": corrected_value,
+                }
+        logger.info("Step 4 section=%s: fix pass applied %d correction(s)", section_name, len(fix_raw))
+        return raw
+
     def _generate_answers_batch(
         self,
         *,
@@ -478,6 +629,7 @@ class GapAnswersGenerator:
         medication_list: dict | None = None,
         model_id: str,
         audit_context: str | None = None,
+        section_name: str = "m_codes",
     ) -> dict:
         """Run one Phase 3 LLM call for a single batch of field codes."""
         # Build per-code metadata from the canonical OASIS field map
@@ -495,15 +647,35 @@ class GapAnswersGenerator:
             fields_with_metadata.append(entry)
 
         medication_json = json.dumps(medication_list, indent=2) if medication_list else "(No medication data available)"
-        answer_prompt = GAP_ANSWER_PROMPT_TEMPLATE.format(
-            archetype=archetype,
-            diagnosis_context=diagnosis_context,
-            has_ambient_scribe="Yes" if "AMBIENT SCRIBE" in scribe_section else "No",
-            referral_text=referral_text,
-            scribe_section=scribe_section,
-            medication_json=medication_json,
-            fields_with_metadata_json=json.dumps(fields_with_metadata, indent=2),
-        )
+        has_ambient_scribe = "Yes" if "AMBIENT SCRIBE" in scribe_section else "No"
+
+        # Select focused prompt by section; fall back to the monolithic template for unknown sections
+        _SECTION_PROMPT_MAP = {
+            "bims":         GAP_BIMS_SECTION_PROMPT,
+            "phq":          GAP_PHQ_SECTION_PROMPT,
+            "gg_self_care": GAP_GG_SELF_CARE_SECTION_PROMPT,
+            "gg_mobility":  GAP_GG_MOBILITY_SECTION_PROMPT,
+            "n0415":        GAP_N0415_SECTION_PROMPT,
+            "m_codes":      GAP_MCODES_SECTION_PROMPT,
+        }
+        prompt_template = _SECTION_PROMPT_MAP.get(section_name, GAP_ANSWER_PROMPT_TEMPLATE)
+
+        # Build kwargs — different sections need different placeholders
+        fmt_kwargs: dict = {
+            "archetype": archetype,
+            "diagnosis_context": diagnosis_context,
+            "fields_with_metadata_json": json.dumps(fields_with_metadata, indent=2),
+        }
+        if "{has_ambient_scribe}" in prompt_template:
+            fmt_kwargs["has_ambient_scribe"] = has_ambient_scribe
+        if "{referral_text}" in prompt_template:
+            fmt_kwargs["referral_text"] = referral_text
+        if "{scribe_section}" in prompt_template:
+            fmt_kwargs["scribe_section"] = scribe_section
+        if "{medication_json}" in prompt_template:
+            fmt_kwargs["medication_json"] = medication_json
+
+        answer_prompt = prompt_template.format(**fmt_kwargs)
 
         if audit_context:
             answer_prompt += f"\n\n{audit_context}"

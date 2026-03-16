@@ -625,10 +625,10 @@ GG0130_LABEL_TO_LETTER: dict[str, str | list[str]] = {
 # Step 4 gap_answers may use single-letter keys ({"A": "04"}) OR
 # descriptive snake_case keys ({"sit_to_stand": "04"}).
 GG0170_KEY_TO_LETTER: dict[str, str] = {
-    # Letter keys pass-through
+    # Letter keys pass-through (A–P + RR)
     "A": "A", "B": "B", "C": "C", "D": "D", "E": "E", "F": "F",
-    "G": "G", "I": "I", "J": "J", "K": "K",
-    "L": "L", "M": "M", "N": "N", "O": "O", "P": "P",
+    "G": "G", "H": "H", "I": "I", "J": "J", "K": "K",
+    "L": "L", "M": "M", "N": "N", "O": "O", "P": "P", "RR": "RR",
     # Descriptive snake_case keys
     "roll_left": "A",
     "roll_right": "A",          # fallback if right-side variant is used
@@ -638,20 +638,22 @@ GG0170_KEY_TO_LETTER: dict[str, str] = {
     "chair_transfer": "E",
     "toilet_transfer": "F",
     "car_transfer": "G",
-    "walk_10_feet": "I",
-    "walk_50_feet": "J",
-    "walk_150_feet": "K",
+    "walk_10_feet": "H",       # GG0170H = Walk 10 Feet
+    "walk_50_feet": "I",       # GG0170I = Walk 50 Feet with Two Turns
+    "walk_150_feet": "J",      # GG0170J = Walk 150 Feet
+    "uneven_surfaces": "K",    # GG0170K = Walking 10 Feet on Uneven Surfaces
     "one_step": "L",
     "four_steps": "M",
     "twelve_steps": "N",
     "picking_up_object": "O",
     "wheelchair_50_feet": "P",
+    "wheelchair_rough": "RR",  # GG0170RR = Wheel 50 Feet on Rough/Uneven Surfaces
 }
 
 # Ordered list of all GG0170 sub-code letters used for fallback iteration
 # when GG0170 is absent from gap_answers.
 GG0170_LETTERS: list[str] = [
-    "A", "B", "C", "D", "E", "F", "I", "J", "K", "L", "M", "N", "O", "P",
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "RR",
 ]
 
 # ADL M-codes that are copied verbatim from Step 4 gap_answers.
@@ -783,7 +785,7 @@ PHQ_MANDATORY: list[str] = [
     "D0150H1", "D0150H2",
     "D0150I1", "D0150I2",
     "D0160",
-    "PHQ_MOOD_INTERVIEW",
+    # PHQ_MOOD_INTERVIEW removed — not a real OASIS-E1 code; was polluting gap output
 ]
 
 # PHQ Column 2 (frequency) codes used to validate the D0160 total score.
@@ -792,8 +794,45 @@ PHQ_FREQUENCY_CODES: list[str] = [
     "D0150E2", "D0150F2", "D0150G2", "D0150H2", "D0150I2",
 ]
 
-# GG functional-goal codes that require clinical judgment — always mandatory.
-GG_MANDATORY: list[str] = ["GG0100", "GG0110", "GG0130", "GG0170", "GG0170C"]
+# GG functional-goal codes and N0415 medication flags — both require live clinical
+# assessment or systematic medication-class lookup; always mandatory in gap_answers.
+# Using explicit sub-codes ensures Phase 3a section groups fire correctly and the
+# mandatory override prevents the filter from stripping them.
+GG_MANDATORY: list[str] = [
+    # GG Prior Functioning (before current illness)
+    "GG0100A", "GG0100B", "GG0100C", "GG0100D",
+    # GG Prior Device Use
+    "GG0110A", "GG0110B", "GG0110C", "GG0110D", "GG0110E", "GG0110F",
+    # GG Self-Care — admission performance (X1) + discharge goal (X2)
+    "GG0130A1", "GG0130A2",
+    "GG0130B1", "GG0130B2",
+    "GG0130C1", "GG0130C2",
+    "GG0130D1", "GG0130D2",
+    "GG0130E1", "GG0130E2",
+    "GG0130F1", "GG0130F2",
+    "GG0130G1", "GG0130G2",
+    # GG Mobility — admission performance (X1) + discharge goal (X2)
+    "GG0170A1", "GG0170A2",
+    "GG0170B1", "GG0170B2",
+    "GG0170C1", "GG0170C2",
+    "GG0170D1", "GG0170D2",
+    "GG0170E1", "GG0170E2",
+    "GG0170F1", "GG0170F2",
+    "GG0170G1", "GG0170G2",
+    "GG0170H1", "GG0170H2",
+    "GG0170I1", "GG0170I2",
+    "GG0170J1", "GG0170J2",
+    "GG0170K1", "GG0170K2",
+    "GG0170L1", "GG0170L2",
+    "GG0170M1", "GG0170M2",
+    "GG0170N1", "GG0170N2",
+    "GG0170O1", "GG0170O2",
+    "GG0170P1", "GG0170P2",
+    "GG0170RR1",
+    # N0415 High-Risk Medication class flags (require systematic drug-class lookup)
+    "N0415A", "N0415B", "N0415C", "N0415D",
+    "N0415E", "N0415F", "N0415G", "N0415H", "N0415I",
+]
 
 # Wound-care OASIS codes included only for wound-bearing archetypes.
 WOUND_CODES: list[str] = [
@@ -808,60 +847,70 @@ WOUND_CODES: list[str] = [
 # Archetypes that always include wound-specific OASIS codes.
 WOUND_ARCHETYPES: set[str] = {"diabetic_foot_ulcer", "sepsis_cellulitis_recovery"}
 
-# All 130+ OASIS gap field codes evaluated in Phase 2 (filter).
-# Sourced from the docread-consumer PROMPT master list.
+# All OASIS-E1 gap field codes evaluated in Phase 2 (filter).
+# RULES for this list:
+#   1. Only real OASIS-E1 item codes — NO non-coded EHR narrative keys (no underscores
+#      like ALLERGIES, VITAL_SIGNS, CARDIOVASCULAR_PROBLEMS, etc.)
+#   2. GG0100/GG0110/GG0130/GG0170 appear as explicit sub-codes (A1, B1, …) so that
+#      Phase 3a section groups receive a non-empty batch and section-specific prompts fire.
+#      Root codes (GG0130, GG0170C, etc.) are invalid in OASIS-E1 output.
+#   3. N0415 appears as sub-codes A–I for the same reason.
+#   4. BIMS sub-codes (C0300A-C, C0400A-C) and PHQ sub-codes (D0150A1-I2) are handled
+#      via BIMS_MANDATORY / PHQ_MANDATORY and are NOT duplicated here.
 ALL_GAP_FIELD_CODES: list[str] = [
+    # A-codes (Administrative)
     "A1250",
-    "ACTIVITIES_PERMITTED",
-    "ACUITY_LEVEL",
-    "ADVANCE_DIRECTIVE",
-    "ALLERGIES",
+    # B-codes (Sensory / Vision / Health Literacy)
     "B0200",
     "B1000",
     "B1300",
+    # C-codes (Cognitive / BIMS) — sub-codes come via BIMS_MANDATORY
     "C0100",
     "C0200",
     "C0300",
     "C0400",
     "C0500",
     "C1310",
-    "CARDIOVASCULAR_PROBLEMS",
-    "CIRCULATORY_HISTORY",
-    "COMMUNITY_SCREENING",
-    "CORRECTIVE_ACTION_PLAN",
+    # D-codes (Mood / PHQ) — D0150 sub-codes come via PHQ_MANDATORY
     "D0160",
-    "DIABETIC_FOOT",
-    "DYSPNEA_HISTORY",
-    "EARS",
-    "ENDOCRINE_HEMATOLOGY",
-    "ENTERAL_FEEDINGS",
-    "ENVIRONMENTAL_RISKS",
-    "EYES_VISION",
-    "FIRE_EMERGENCY",
-    "FUNCTIONAL_LIMITATIONS",
-    "GAIT_EVALUATION",
-    "GASTROINTESTINAL",
-    "GENITALIA",
-    "GENITOURINARY",
-    "GG0100",
-    "GG0110",
-    "GG0130",
-    "GG0170",
-    "GG0170C",
-    "GROOMING_TASKS",
-    "HOMEBOUND_REASONS",
-    "HOME_SAFETY_EVALUATION",
-    "HOUSEHOLD_MEMBERS",
-    "IMMUNIZATION",
-    "INFECTION_CONTROL",
-    "INFUSION_CARE",
-    "INFUSION_THERAPY",
-    "INSTRUCTIONS_PROVIDED",
+    # GG-codes: sub-codes ONLY (root codes removed; feed Phase 3a section groups directly)
+    # Prior Functioning
+    "GG0100A", "GG0100B", "GG0100C", "GG0100D",
+    # Prior Device Use
+    "GG0110A", "GG0110B", "GG0110C", "GG0110D", "GG0110E", "GG0110F",
+    # Self-Care — admission (X1) + discharge goal (X2)
+    "GG0130A1", "GG0130A2",
+    "GG0130B1", "GG0130B2",
+    "GG0130C1", "GG0130C2",
+    "GG0130D1", "GG0130D2",
+    "GG0130E1", "GG0130E2",
+    "GG0130F1", "GG0130F2",
+    "GG0130G1", "GG0130G2",
+    # Mobility — admission (X1) + discharge goal (X2)
+    "GG0170A1", "GG0170A2",
+    "GG0170B1", "GG0170B2",
+    "GG0170C1", "GG0170C2",
+    "GG0170D1", "GG0170D2",
+    "GG0170E1", "GG0170E2",
+    "GG0170F1", "GG0170F2",
+    "GG0170G1", "GG0170G2",
+    "GG0170H1", "GG0170H2",
+    "GG0170I1", "GG0170I2",
+    "GG0170J1", "GG0170J2",
+    "GG0170K1", "GG0170K2",
+    "GG0170L1", "GG0170L2",
+    "GG0170M1", "GG0170M2",
+    "GG0170N1", "GG0170N2",
+    "GG0170O1", "GG0170O2",
+    "GG0170P1", "GG0170P2",
+    "GG0170RR1",
+    # J-codes (Pain)
     "J0510",
     "J0520",
     "J0530",
+    # K-codes (Nutritional)
     "K0520",
-    "LANGUAGE_INTERPRETER",
+    # M-codes (Clinical / ADL / Medication)
     "M0080",
     "M0090",
     "M0100",
@@ -939,39 +988,89 @@ ALL_GAP_FIELD_CODES: list[str] = [
     "M2100",
     "M2102",
     "M2110",
-    "MARITAL_STATUS",
-    "MENTAL_STATUS",
-    "MOUTH",
-    "MUSCLE_ROM",
-    "MUSCULOSKELETAL",
-    "N0415",
-    "NAILS",
-    "NEURO_EMOTIONAL_PROBLEMS",
-    "NOSE",
-    "NUTRITIONAL_REQUIREMENTS",
-    "NUTRITIONAL_STATUS",
+    # N-codes (Medication flags) — sub-codes ONLY (root N0415 removed)
+    "N0415A", "N0415B", "N0415C", "N0415D",
+    "N0415E", "N0415F", "N0415G", "N0415H", "N0415I",
+    # O-codes (Special treatments)
     "O0110",
-    "ORGANIZATIONS_ASSISTANCE",
-    "OXYGEN_SAFETY",
-    "PERTINENT_HISTORY",
-    "PHQ_MOOD_INTERVIEW",
-    "PROGNOSIS",
-    "PSYCHOSOCIAL_PROBLEMS",
-    "PT_INR",
-    "PT_NUTRITIONAL_STATUS",
-    "RESPIRATORY",
-    "SAFETY_MEASURES",
-    "SANITATION_HAZARDS",
-    "SKIN",
-    "SPECIAL_APPLIANCES",
-    "STRUCTURAL_BARRIERS",
-    "THROAT",
-    "TIMINGS",
-    "TRANSPORTATION_ASSISTANCE",
-    "TUG_ASSESSMENT",
-    "VITAL_SIGNS",
-    "WOUND_CARE",
 ]
 
-# Number of gap field codes sent to the LLM per Phase 3 batch request.
+# Number of gap field codes sent to the LLM per Phase 3 batch request (M-codes chunk size).
 PHASE3_BATCH_SIZE: int = 50
+
+# ── Gap Answer Section Groups ──────────────────────────────────────────────────
+# Mandatory clinical sections that are always generated as fixed groups in Phase 3.
+# Each tuple is (section_name, list_of_codes).  M-codes remain dynamic (built from
+# the filter output) and are NOT listed here — they still use PHASE3_BATCH_SIZE chunks.
+
+_BIMS_SECTION_CODES: list[str] = [
+    "C0100",
+    "C0200",
+    "C0300", "C0300A", "C0300B", "C0300C",
+    "C0400", "C0400A", "C0400B", "C0400C",
+    "C0500",
+    "C1310",
+]
+
+_PHQ_SECTION_CODES: list[str] = [
+    "D0150A1", "D0150A2",
+    "D0150B1", "D0150B2",
+    "D0150C1", "D0150C2",
+    "D0150D1", "D0150D2",
+    "D0150E1", "D0150E2",
+    "D0150F1", "D0150F2",
+    "D0150G1", "D0150G2",
+    "D0150H1", "D0150H2",
+    "D0150I1", "D0150I2",
+    "D0160",
+]
+
+_GG_SELF_CARE_SECTION_CODES: list[str] = [
+    # Prior functioning (before current illness)
+    "GG0100A", "GG0100B", "GG0100C", "GG0100D",
+    # Prior device use
+    "GG0110A", "GG0110B", "GG0110C", "GG0110D", "GG0110E", "GG0110F",
+    # Self-care admission (X1) and discharge goal (X2)
+    "GG0130A1", "GG0130A2",
+    "GG0130B1", "GG0130B2",
+    "GG0130C1", "GG0130C2",
+    "GG0130D1", "GG0130D2",
+    "GG0130E1", "GG0130E2",
+    "GG0130F1", "GG0130F2",
+    "GG0130G1", "GG0130G2",
+]
+
+_GG_MOBILITY_SECTION_CODES: list[str] = [
+    "GG0170A1", "GG0170A2",
+    "GG0170B1", "GG0170B2",
+    "GG0170C1", "GG0170C2",
+    "GG0170D1", "GG0170D2",
+    "GG0170E1", "GG0170E2",
+    "GG0170F1", "GG0170F2",
+    "GG0170G1", "GG0170G2",
+    "GG0170H1", "GG0170H2",
+    "GG0170I1", "GG0170I2",
+    "GG0170J1", "GG0170J2",
+    "GG0170K1", "GG0170K2",
+    "GG0170L1", "GG0170L2",
+    "GG0170M1", "GG0170M2",
+    "GG0170N1", "GG0170N2",
+    "GG0170O1", "GG0170O2",
+    "GG0170P1", "GG0170P2",
+    "GG0170RR1",
+]
+
+_N0415_SECTION_CODES: list[str] = [
+    "N0415A", "N0415B", "N0415C", "N0415D",
+    "N0415E", "N0415F", "N0415G", "N0415H", "N0415I",
+]
+
+# Ordered list of (section_name, codes) for the fixed mandatory Gap sections.
+# M-code dynamic batches are handled separately in the generator.
+GAP_ANSWER_SECTION_GROUPS: list[tuple[str, list[str]]] = [
+    ("bims",         _BIMS_SECTION_CODES),
+    ("phq",          _PHQ_SECTION_CODES),
+    ("gg_self_care", _GG_SELF_CARE_SECTION_CODES),
+    ("gg_mobility",  _GG_MOBILITY_SECTION_CODES),
+    ("n0415",        _N0415_SECTION_CODES),
+]

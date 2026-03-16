@@ -324,6 +324,12 @@ ADL OBSERVATIONS — [timestamp]
   "Moderate assistance", "Substantial/Maximal assistance", "Dependent"
 [Include: what patient attempted, what level of assist was needed, specific ADLs observed,
  patient response/fatigue level, any adaptive equipment in use.]
+[For each major self-care and mobility activity observed, describe the assistance level
+ specifically, e.g.: "Required substantial/maximal assistance with eating and oral hygiene;
+ moderate assistance with upper body dressing; dependent for lower body dressing and
+ bathing. Rolled in bed with minimal assistance. Required maximal assistance to sit to
+ standing and for bed/chair transfers. Not able to ambulate without maximal support."
+ This detail maps to GG0130 (self-care) and GG0170 (mobility) sub-code scores.]
 
 HOME SAFETY OBSERVATION — [timestamp]
 [2-3 sentences first-person prose. Specific hazards observed (name them — not generic).
@@ -374,14 +380,16 @@ RULES:
   C0400B, C0400C, C0500, C1310) — these require live cognitive testing.
 - NEVER include PHQ mood codes (D0150A1 through D0150I2, D0160) —
   these require a live structured mood interview.
-- NEVER include GG discharge goal codes (GG0100, GG0110, GG0130, GG0170, GG0170C) —
-  these require clinical judgment about expected functional recovery.
-- NEVER include a bare root GG0130 or GG0170 code — always use the full sub-item suffix
-  (e.g. GG0130A1, GG0170D1). Root codes without a letter+digit suffix are invalid.
+- NEVER include ANY GG code regardless of sub-code suffix (GG0100x, GG0110x, GG0130x,
+  GG0170x, GG0100A-D, GG0110A-F, GG0130A1-G2, GG0170A1-RR1, etc.) — all GG codes
+  require live clinical assessment and are always mandatory.
+- NEVER include N0415 codes (N0415A through N0415I) — these require systematic
+  drug-class lookup and are always mandatory.
 - Return ONLY real OASIS-E1 item codes. Non-clinical EHR narrative keys such as
   ALLERGIES, VITAL_SIGNS, CIRCULATORY_HISTORY, MENTAL_STATUS, SKIN, ACTIVITIES_PERMITTED,
   LAB_RESULTS, and similar non-coded descriptors must NEVER appear. If such a code is in
-  the input list, omit it from the output entirely.
+  the input list, omit it from the output entirely. Codes containing an underscore
+  character are NEVER valid OASIS-E1 codes — omit them entirely.
 - Return a JSON object with a single key "answerable_codes" containing an array of strings.
 
 PATIENT DOCUMENTATION:
@@ -1244,4 +1252,666 @@ fields at their current values.
 
 Output ONLY valid JSON with no markdown fences, no commentary before or after.
 Generate the revised oasis_gold_standard.json now:"""
+
+# =============================================================================
+# SECTION-FOCUSED GAP ANSWER PROMPTS  (Step 4 — Phase 3 batch generation)
+# Each prompt handles exactly one clinical section's codes.  Together they
+# replace the monolithic GAP_ANSWER_PROMPT_TEMPLATE for the five mandatory
+# sections; M-codes continue to use GAP_MCODES_SECTION_PROMPT.
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — BIMS section
+# Placeholders: {archetype}, {diagnosis_context}, {has_ambient_scribe},
+#               {referral_text}, {scribe_section}, {fields_with_metadata_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_BIMS_SECTION_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist generating synthetic BIMS
+(Brief Interview for Mental Status) answers.
+
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+- Has Ambient Scribe: {has_ambient_scribe}
+
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+TASK: Generate clinically realistic BIMS answers for ALL codes listed below.
+
+MANDATORY BIMS ARITHMETIC (CMS rule — violations cause dataset rejection):
+  Step A: C0300 = C0300A + C0300B + C0300C  (range 0–6)
+  Step B: C0400 = C0400A + C0400B + C0400C  (range 0–6)
+  Step C: C0500 = C0200  + C0300  + C0400   (range 0–15)
+  C0300 and C0400 are DERIVED — compute them from their sub-codes, do NOT set independently.
+
+BIMS SCALE:
+  C0200: 0=none recalled, 1=one word, 2=two words, 3=all three
+  C0300A: 0=incorrect, 1=missed by >5y, 2=missed by 2–5y, 3=correct
+  C0300B: 0=incorrect, 1=missed by >1mo, 2=correct
+  C0300C: 0=incorrect, 1=correct
+  C0400A/B/C: 0=could not recall, 1=yes with cue, 2=no cue needed
+  C0100 / C1310: 0=No, 1=Yes
+  Use 99 for any code if patient was unable/refused to participate.
+
+Return ONLY a valid JSON object (no markdown, no backticks):
+{{
+  "FIELD_CODE": {{"question": "<verbatim from field definition>", "answer": "<value>"}},
+  ...
+}}
+
+BIMS FIELDS:
+{fields_with_metadata_json}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — PHQ section
+# Placeholders: {archetype}, {diagnosis_context}, {has_ambient_scribe},
+#               {referral_text}, {scribe_section}, {fields_with_metadata_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_PHQ_SECTION_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist generating synthetic
+PHQ-9 (Patient Health Questionnaire) mood interview answers.
+
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+- Has Ambient Scribe: {has_ambient_scribe}
+
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+TASK: Generate clinically realistic PHQ-9 answers for ALL codes listed below.
+PHQ_MOOD_INTERVIEW is not an OASIS-E1 code — omit it entirely from the output.
+
+⚠️  CRITICAL PHQ-2 SCREENING GATE (CMS mandatory — violations cause dataset rejection):
+  Step 1 — screen_score = D0150A1 + D0150B1
+  Step 2 — If screen_score < 3 (negative screen):
+    • D0150C1 through D0150I1 MUST ALL be null (NOT 0 — use null)
+    • D0150C2 through D0150I2 MUST ALL be null
+    • D0160 = (D0150A2 if D0150A1=1 else 0) + (D0150B2 if D0150B1=1 else 0) ONLY
+    • Example: A1=1, A2=2, B1=1, B2=1 → screen=2 → D0160=2+1=3
+  Step 3 — If screen_score ≥ 3 (positive screen):
+    • Administer all items A–I normally
+    • D0160 = sum of all D0150X2 where D0150X1 = 1
+
+PHQ SCALES:
+  Column 1 (X1): 0=symptom not present, 1=symptom present
+  Column 2 (X2): 0=not at all, 1=several days, 2=more than half the days, 3=nearly every day
+  Items A–I: A=little interest, B=feeling down, C=sleep, D=tired, E=appetite,
+             F=feeling bad about self, G=concentrating, H=moving/speaking slowly, I=self-harm
+
+Return ONLY a valid JSON object (no markdown, no backticks):
+{{
+  "FIELD_CODE": {{"question": "<verbatim from field definition>", "answer": <null or "<value>">}},
+  ...
+}}
+
+PHQ FIELDS:
+{fields_with_metadata_json}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — GG Self-Care section
+# Placeholders: {archetype}, {diagnosis_context}, {has_ambient_scribe},
+#               {referral_text}, {scribe_section}, {fields_with_metadata_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_GG_SELF_CARE_SECTION_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist generating synthetic
+GG self-care, prior functioning, and prior device answers.
+
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+- Has Ambient Scribe: {has_ambient_scribe}
+
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+TASK: Generate clinically realistic answers for ALL codes listed below.
+NEVER use a bare root code (GG0130, GG0170, GG0100) — always use the full sub-item code.
+
+GG SELF-CARE SUB-CODES (X1=admission performance, X2=expected discharge goal):
+  GG0130A1/A2 = Eating
+  GG0130B1/B2 = Oral Hygiene
+  GG0130C1/C2 = Shower/Bathe Self
+  GG0130D1/D2 = Upper Body Dressing  ← FREQUENTLY MISSING — MUST emit both D1 and D2
+  GG0130E1/E2 = Lower Body Dressing  ← FREQUENTLY MISSING — MUST emit both E1 and E2
+  GG0130F1/F2 = Toileting Hygiene
+  GG0130G1/G2 = Denture Care (oral hygiene/denture removal)
+
+GG0100 PRIOR FUNCTIONING (before this illness/injury):
+  3=Independent, 2=Needed some help, 1=Dependent, 8=Unknown
+  GG0100A=Self-care, GG0100B=Indoor mobility, GG0100C=Stairs, GG0100D=Functional cognition
+
+GG0110 PRIOR DEVICE USE (before this illness — 0=No, 1=Yes per device):
+  GG0110A=Cane/Crutch, GG0110B=Walker, GG0110C=Wheelchair, GG0110D=Prosthetics/Orthotics,
+  GG0110E=None of above, GG0110F=Other
+
+GG PERFORMANCE SCALE (for GG0130 X1 admission):
+  01=Dependent, 02=Substantial assist, 03=Partial assist, 04=Supervision,
+  05=Setup/cleanup only, 06=Independent, 07=Refused, 09=Not applicable,
+  10=Equipment unavailable, 88=Not attempted
+
+Return ONLY a valid JSON object (no markdown, no backticks):
+{{
+  "FIELD_CODE": {{"question": "<verbatim from field definition>", "answer": "<value>"}},
+  ...
+}}
+
+GG SELF-CARE / PRIOR FUNCTION / PRIOR DEVICE FIELDS:
+{fields_with_metadata_json}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — GG Mobility section
+# Placeholders: {archetype}, {diagnosis_context}, {has_ambient_scribe},
+#               {referral_text}, {scribe_section}, {fields_with_metadata_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_GG_MOBILITY_SECTION_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist generating synthetic
+GG mobility answers.
+
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+- Has Ambient Scribe: {has_ambient_scribe}
+
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+TASK: Generate clinically realistic answers for ALL codes listed below.
+NEVER use a bare root code (GG0170) — always use the full sub-item code.
+
+GG0170 MOBILITY SUB-CODES (X1=admission performance, X2=expected discharge goal):
+  GG0170A1/A2 = Roll Left and Right in Bed
+  GG0170B1/B2 = Sit to Lying
+  GG0170C1/C2 = Lying to Sitting on Side of Bed
+  GG0170D1/D2 = Sit to Stand            ← MUST emit
+  GG0170E1/E2 = Chair/Bed-to-Chair Transfer  ← MUST emit
+  GG0170F1/F2 = Toilet Transfer          ← MUST emit
+  GG0170G1/G2 = Car Transfer
+  GG0170H1/H2 = Walk 10 Feet
+  GG0170I1/I2  = Walk 50 Feet with Two Turns
+  GG0170J1/J2 = Walk 150 Feet
+  GG0170K1/K2 = Walking 10 Feet on Uneven Surfaces
+  GG0170L1/L2 = 1 Step (Curb)
+  GG0170M1/M2 = 4 Steps
+  GG0170N1/N2 = 12 Steps
+  GG0170O1/O2 = Picking Up Object
+  GG0170P1/P2 = Wheel 50 Feet with Two Turns
+  GG0170RR1   = Wheel 50 Feet on Rough/Uneven Surfaces (admission only — no X2)
+
+GG PERFORMANCE SCALE:
+  01=Dependent, 02=Substantial assist, 03=Partial assist, 04=Supervision,
+  05=Setup/cleanup only, 06=Independent, 07=Refused, 09=Not applicable,
+  10=Equipment unavailable, 88=Not attempted
+
+Return ONLY a valid JSON object (no markdown, no backticks):
+{{
+  "FIELD_CODE": {{"question": "<verbatim from field definition>", "answer": "<value>"}},
+  ...
+}}
+
+GG MOBILITY FIELDS:
+{fields_with_metadata_json}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — N0415 section
+# Placeholders: {archetype}, {diagnosis_context}, {medication_json},
+#               {fields_with_metadata_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_N0415_SECTION_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist generating synthetic
+N0415 high-risk drug class flag answers.
+
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+
+--- MEDICATION LIST (derive N0415 flags from this — the ONLY valid source) ---
+{medication_json}
+
+TASK: Derive all nine N0415 flags (A–I) DETERMINISTICALLY from the medication list above.
+Set "1" if any active medication matches the drug class; "0" otherwise.
+ALL NINE sub-codes (N0415A through N0415I) MUST appear in your output.
+
+N0415 DRUG CLASS → FLAG MAPPING:
+  N0415A = Antipsychotic    → haloperidol, quetiapine, risperidone, olanzapine, aripiprazole
+  N0415B = Anticoagulant    → warfarin, apixaban, rivaroxaban, dabigatran, enoxaparin, heparin
+  N0415C = Antibiotic       → any systemic antibiotic (amoxicillin, ciprofloxacin, vancomycin…)
+  N0415D = Antiplatelet     → aspirin ≥325mg, clopidogrel, ticagrelor, prasugrel
+  N0415E = Hypoglycemic     → insulin, metformin, glipizide, sitagliptin, empagliflozin
+  N0415F = Cardiovascular   → digoxin, amiodarone, flecainide, sotalol, dronedarone
+  N0415G = Diuretic         → furosemide, torsemide, bumetanide, hydrochlorothiazide, chlorthalidone
+  N0415H = Opioid           → oxycodone, morphine, hydromorphone, fentanyl, tramadol, codeine, buprenorphine
+  N0415I = None of above    → set "1" ONLY if ALL of N0415A through N0415H are "0"
+
+Return ONLY a valid JSON object (no markdown, no backticks):
+{{
+  "FIELD_CODE": {{"question": "<verbatim from field definition>", "answer": "0" or "1"}},
+  ...
+}}
+
+N0415 FIELDS:
+{fields_with_metadata_json}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — M-codes (clinical, ADL, and other dynamic codes)
+# Placeholders: {archetype}, {diagnosis_context}, {has_ambient_scribe},
+#               {referral_text}, {scribe_section}, {medication_json},
+#               {fields_with_metadata_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_MCODES_SECTION_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist generating synthetic patient
+dataset answers for a batch of OASIS M-codes and other clinical field codes.
+
+⚠️  CRITICAL SCOPE RULE — READ FIRST:
+Only generate answers for real OASIS-E1 item codes. The following MUST be omitted entirely:
+  1. Any code containing an underscore — these are non-coded EHR narrative descriptors, NOT
+     OASIS-E1 codes: ALLERGIES, VITAL_SIGNS, ACTIVITIES_PERMITTED, CIRCULATORY_HISTORY,
+     MENTAL_STATUS, SKIN, LAB_RESULTS, WOUND_CARE, FALL_RISK_FACTORS, COGNITIVE_STATUS,
+     FUNCTIONAL_LIMITATIONS, HOMEBOUND_STATUS, SAFETY_MEASURES, NUTRITIONAL_STATUS,
+     CAREGIVER_STATUS, PHQ_MOOD_INTERVIEW, CARDIOVASCULAR_PROBLEMS, DIABETIC_FOOT, and
+     ANY other key with an underscore — if a code has "_" in it, omit it completely.
+  2. Bare GG root codes without a full alphanumeric suffix: GG0130, GG0170, GG0100,
+     GG0110 — these are invalid as standalone outputs. GG sub-codes are handled by a
+     dedicated generation step and must NOT be re-generated here.
+  3. Bare N0415 root without a letter suffix — N0415A through N0415I are handled by a
+     dedicated generation step and must NOT be re-generated here.
+
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+- Has Ambient Scribe: {has_ambient_scribe}
+
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+--- MEDICATION LIST ---
+{medication_json}
+
+COMMON M-CODE VALUE RANGES (use only valid coded values):
+  M0100: 01=SOC, 03=ROC, 04=Recert, 06=Transfer, 09=Discharge
+  M1021/M1023: ICD-10 code + symptom control rating 0–4
+  M1060: height in inches / weight in pounds
+  M1100: 01=Alone-no help … 09=With others-continuous
+  M1400: 0=No dyspnea, 1=With exertion, 2=With ADLs, 3=At rest
+  M1500: 0=No CHF, 1=Exertion, 2=ADLs, 3=At rest
+  M1700: 0=Alert/oriented, 1=Difficulty focusing, 2=Disoriented, 3=Comatose
+  M1800: 0=Indep, 1=Supplies laid out, 2=Reminding, 3=Partial help, 4=Unable
+  M1810/M1820: 0=Indep, 1=Clothes laid out, 2=Intermittent help, 3=Continuous help, 4=Unable
+  M1830: 0=Indep, 1=Reminding/supervis, 2=Intermittent, 3=Continuous, 4=Unable
+  M1840: 0=Indep, 1=Supervis, 2=Intermittent, 3=Continuous, 4=Unable/ostomy
+  M1850: 0=Indep, 1=Minimal/device, 2=Needs human help, 3=Unable, 4=Bedfast
+  M1860: 0=Indep, 1=One-handed device, 2=Non-weight device, 3=Walker/crutches, 4=Human help, 5=Non-amby can wheel, 6=Non-amby cannot wheel
+  B0200: 0=Adequate, 1=Minimal difficulty, 2=Moderate, 3=Highly impaired
+  B1000: 0=Adequate, 1=Large print, 2=Headlines only, 3=Highly impaired, 4=Severely impaired
+  J0510: 0=No pain, 1=Pain present
+  J0600: 0–10 numeric pain intensity
+
+Generate archetype-appropriate answers. For CHF: dyspnea, edema. For TKR: post-surgical pain.
+For CVA: hemiparesis. For COPD: O2, dyspnea. For diabetic foot: wound, neuropathy.
+
+Return ONLY a valid JSON object (no markdown, no backticks):
+{{
+  "FIELD_CODE": {{"question": "<verbatim from field definition>", "answer": "<value>"}},
+  ...
+}}
+
+Every OASIS-E1 field code in the list MUST have an entry. Non-OASIS codes must be omitted.
+
+FIELDS:
+{fields_with_metadata_json}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap — Section Fix Prompt (shared across all gap sections)
+# Placeholders: {section_name}, {violations_list}, {original_answers_json},
+#               {archetype}, {diagnosis_context}, {medication_json},
+#               {referral_text}, {scribe_section}
+# ─────────────────────────────────────────────────────────────────────────────
+GAP_SECTION_FIX_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist fixing validation errors in a
+synthetic gap-answer section.
+
+SECTION: {section_name}
+PATIENT CONTEXT: Archetype={archetype}, Diagnosis={diagnosis_context}
+
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+--- MEDICATION LIST ---
+{medication_json}
+
+CURRENT ANSWERS (the generated values that contain errors):
+{original_answers_json}
+
+VALIDATION VIOLATIONS — fix EVERY one of these:
+{violations_list}
+
+RULES:
+1. Return ONLY a flat JSON object containing the corrected field codes and their new values.
+2. Only include fields that need to change — do NOT repeat unchanged fields.
+3. Values must be plain strings (e.g. "3", "01", "1", null for PHQ gate nulled items).
+4. For PHQ gate nulled items, use null (JSON null), NOT the string "null".
+5. No markdown, no backticks, no explanations.
+
+Return the corrections as:
+{{
+  "FIELD_CODE": "corrected_value",
+  ...
+}}
+"""
+
+# =============================================================================
+# SECTION-FOCUSED GOLD STANDARD PROMPTS  (Step 6 — LLM batch generation)
+# Each prompt handles one of the five OASIS_SECTION_BATCHES.  Together they
+# replace the monolithic OASIS_GOLD_STANDARD_PROMPT.
+# =============================================================================
+
+_GOLD_COMMON_HEADER = """\
+⚠️  OUTPUT SCOPE RULE — MANDATORY:
+Only generate values for real OASIS-E1 item codes. The following keys are NOT OASIS-E1 codes;
+skip them entirely — do NOT output a value for them:
+  PHQ_MOOD_INTERVIEW, ALLERGIES, VITAL_SIGNS, CIRCULATORY_HISTORY, MENTAL_STATUS, SKIN,
+  LAB_RESULTS, WOUND_CARE, FALL_RISK_FACTORS, COGNITIVE_STATUS, FUNCTIONAL_LIMITATIONS,
+  HOMEBOUND_STATUS, SAFETY_MEASURES, NUTRITIONAL_STATUS, CAREGIVER_STATUS,
+  ACTIVITIES_PERMITTED, and any other free-text EHR narrative descriptor.
+
+⚠️  AUTHORITY RULE — MANDATORY for every field in gap_context:
+  • Copy the value VERBATIM — do NOT re-derive, re-interpret, or override.
+  • Your rationale MUST state "Propagated verbatim from Step 4 gap assessment."
+
+Return ONLY a flat JSON object: every key = OASIS item code (string), every value = plain string.
+No nested objects, no arrays, no null. Omit skipped items entirely.
+Coded values only — never append descriptions (use "2" not "2 - Requires assistance").
+{{
+  "FIELD_CODE": "value",
+  ...
+}}
+"""
+
+_GOLD_CONTEXT_BLOCK = """\
+PATIENT CONTEXT:
+- Archetype: {archetype}
+- Primary Diagnosis: {diagnosis_context}
+- Has Ambient Scribe: {has_scribe}
+- Assessment Section: {section_name}
+
+SOURCE DOCUMENTS:
+--- REFERRAL PACKET ---
+{referral_text}
+
+{scribe_section}
+
+--- STEP 4 GAP ASSESSMENT (AUTHORITATIVE VALUES) ---
+{gap_context}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — Batch A: Admin & Diagnosis
+# Placeholders: {archetype}, {diagnosis_context}, {has_scribe}, {section_name},
+#               {referral_text}, {scribe_section}, {gap_context}, {field_codes_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GOLD_ADMIN_DIAGNOSIS_PROMPT = (
+    "You are an expert OASIS-E1 clinical documentation specialist generating a gold-standard "
+    "synthetic patient assessment — Administrative and Diagnosis section.\n\n"
+    + _GOLD_COMMON_HEADER
+    + "\n"
+    + _GOLD_CONTEXT_BLOCK
+    + """
+A1010 SPECIAL RULE: A1010 is the Race/Ethnicity multi-select field (coded flags).
+Valid codes: 01=American Indian/Alaska Native, 02=Asian, 03=Black/African American,
+04=Hispanic/Latino, 05=White, 06=Other, 99=Unknown.
+NEVER fill A1010 with address text, patient name, date, or any non-code narrative.
+
+A1005 = Ethnicity: 1=Not Hispanic/Latino, 2=Hispanic/Latino (must be 1 or 2 only).
+A1110 = Preferred language code (EN, SP, OT, etc. — 2-3 chars, never a date or name).
+
+M1021/M1023: Use valid ICD-10 code + symptom control rating 0–4.
+M0100: 01=SOC, 03=ROC, 04=Recert, 06=Transfer, 09=Discharge.
+M1060: M1060A=height in inches, M1060B=weight in lbs.
+M0090/M0102/M0104/M0110: Dates use MMDDYYYY format, year must be ≥ 2000.
+
+Diagnosis lists: M1021, M1023_1, M1023_2, M1023_3 (use underscore suffix).
+Multi-select: M1030_1, M1030_2, etc.
+
+FIELD CODES FOR THIS BATCH:
+{field_codes_json}
+"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — Batch B: Sensory, Behavioral, Living
+# Placeholders: same as Batch A (no medication_json needed)
+# ─────────────────────────────────────────────────────────────────────────────
+GOLD_SENSORY_BEHAVIORAL_PROMPT = (
+    "You are an expert OASIS-E1 clinical documentation specialist generating a gold-standard "
+    "synthetic patient assessment — Sensory, Behavioral, and Living Situation section.\n\n"
+    + _GOLD_COMMON_HEADER
+    + "\n"
+    + _GOLD_CONTEXT_BLOCK
+    + """
+SENSORY / BEHAVIORAL SCALES:
+  B0200: 0=Adequate, 1=Minimal difficulty, 2=Moderate, 3=Highly impaired
+  B1000: 0=Adequate, 1=Large print, 2=Headlines only, 3=Highly impaired, 4=Severely impaired
+  B1300: 0=Never needs help, 1=Rarely, 2=Sometimes, 3=Often, 4=Always
+         *** B1300 MUST be copied VERBATIM from gap_context if present — do NOT re-assess ***
+  J0510: 0=No pain, 1=Pain present
+  J0520: 0=No effect on sleep, 1=Sleep <6h, 2=Cannot sleep
+  J0530: 0=No effect, 1=Limited some, 2=Couldn't do some, 3=Can't do most
+  J0600: 0–10 numeric pain intensity
+  M1100: 01=Alone-no help … 09=With others-continuous
+  M1700: 0=Alert/oriented, 1=Difficulty focusing, 2=Disoriented, 3=Comatose
+  M1710: 0=Not confused, 1=≤50% time, 2=>50% time, 3=Consistently confused
+  M1720: 0=Not anxious, 1=≤50% time, 2=>50% time, 3=Consistently anxious
+  M1740: multi-select 1–7 (1=Memory, 2=Decision, 3=Verbal, 4=Physical, 5=Disruptive, 6=Delusional, 7=None)
+  M1745: 0=No behaviors, 1=≤weekly, 2=1–3/day, 3=3+/day
+  D0700: discharge planning initiated 0=No, 1=Yes
+
+FOR M2040 (IV medication management): copy VERBATIM from gap_context if present —
+  0=No IV meds, 1=Patient/carer manages, 2=HHA manages, 3=Both.
+  Do NOT re-derive from clinical judgment.
+
+FIELD CODES FOR THIS BATCH:
+{field_codes_json}
+"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — Batch C: GG Self-Care + Prior Function + Prior Devices
+# Placeholders: {archetype}, {diagnosis_context}, {has_scribe}, {section_name},
+#               {referral_text}, {scribe_section}, {gap_context}, {field_codes_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GOLD_GG_SELF_CARE_PROMPT = (
+    "You are an expert OASIS-E1 clinical documentation specialist generating a gold-standard "
+    "synthetic patient assessment — GG Self-Care, Prior Functioning, and Prior Devices section.\n\n"
+    + _GOLD_COMMON_HEADER
+    + "\n"
+    + _GOLD_CONTEXT_BLOCK
+    + """
+GG0130 SELF-CARE (X1=admission, X2=discharge goal — MUST emit ALL sub-codes):
+  GG0130A1/A2 = Eating
+  GG0130B1/B2 = Oral Hygiene
+  GG0130C1/C2 = Shower/Bathe Self
+  GG0130D1/D2 = Upper Body Dressing  ← FREQUENTLY MISSING — MUST emit
+  GG0130E1/E2 = Lower Body Dressing  ← FREQUENTLY MISSING — MUST emit
+  GG0130F1/F2 = Toileting Hygiene
+  GG0130G1/G2 = Denture Care
+
+GG0100 PRIOR FUNCTIONING: 3=Independent, 2=Some help, 1=Dependent, 8=Unknown
+  A=Self-care, B=Indoor mobility, C=Stairs, D=Functional cognition
+
+GG0110 PRIOR DEVICE USE (0=No, 1=Yes):
+  A=Cane/Crutch, B=Walker, C=Wheelchair, D=Prosthetics, E=None of above, F=Other
+
+GG PERFORMANCE SCALE:
+  01=Dependent, 02=Substantial assist, 03=Partial assist, 04=Supervision,
+  05=Setup/cleanup, 06=Independent, 07=Refused, 09=N/A, 10=Equipment unavailable, 88=Not attempted
+
+All GG0130 X1 (admission) codes must be COPIED VERBATIM from gap_context if present.
+X2 (discharge goal) = typically 1–2 levels more independent than X1.
+
+FIELD CODES FOR THIS BATCH:
+{field_codes_json}
+"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — Batch D: GG Mobility + ADL
+# Placeholders: {archetype}, {diagnosis_context}, {has_scribe}, {section_name},
+#               {referral_text}, {scribe_section}, {gap_context}, {field_codes_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GOLD_GG_MOBILITY_ADL_PROMPT = (
+    "You are an expert OASIS-E1 clinical documentation specialist generating a gold-standard "
+    "synthetic patient assessment — GG Mobility and M-ADL section.\n\n"
+    + _GOLD_COMMON_HEADER
+    + "\n"
+    + _GOLD_CONTEXT_BLOCK
+    + """
+GG0170 MOBILITY (X1=admission, X2=discharge goal — MUST emit ALL sub-codes below):
+  GG0170A1/A2 = Roll Left/Right in Bed     ← MUST emit
+  GG0170B1/B2 = Sit to Lying               ← MUST emit
+  GG0170C1/C2 = Lying to Sitting           ← MUST emit
+  GG0170D1/D2 = Sit to Stand               ← MUST emit
+  GG0170E1/E2 = Chair/Bed Transfer         ← MUST emit
+  GG0170F1/F2 = Toilet Transfer            ← MUST emit
+  GG0170G1/G2 = Car Transfer
+  GG0170H1/H2 = Walk 10 Feet
+  GG0170I1/I2  = Walk 50 Feet
+  GG0170J1/J2 = Walk 150 Feet
+  GG0170K1/K2 = Walk 10 Feet Uneven
+  GG0170L1/L2 = 1 Step (Curb)
+  GG0170M1/M2 = 4 Steps
+  GG0170N1/N2 = 12 Steps
+  GG0170O1/O2 = Picking Up Object
+  GG0170P1/P2 = Wheel 50 Feet
+  GG0170RR1   = Wheel 50 Ft Uneven (admission only — no X2)
+
+GG SCALE: 01=Dependent, 02=Substantial, 03=Partial, 04=Supervision, 05=Setup,
+          06=Independent, 07=Refused, 09=N/A, 10=Equipment unavailable, 88=Not attempted
+
+All GG0170 X1 (admission) codes must be COPIED VERBATIM from gap_context if present.
+X2 (discharge goal) = typically 1–2 levels more independent than X1.
+
+M-ADL SCALE (M1800–M1910 — copy from gap_context if present):
+  M1800=Grooming, M1810=Dress upper, M1820=Dress lower, M1830=Bathing, M1840=Toileting,
+  M1845=Incont care, M1850=Transferring, M1860=Ambulation, M1870=Eating,
+  M1880=Oral meds, M1890=Phone, M1900=Therapy need, M1910=Falls risk
+  Scale 0=Independent → 4=Unable (see full OASIS reference for each item).
+
+FIELD CODES FOR THIS BATCH:
+{field_codes_json}
+"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — Batch E: Wound, Respiratory, Medications
+# Placeholders: {archetype}, {diagnosis_context}, {has_scribe}, {section_name},
+#               {referral_text}, {scribe_section}, {medication_json},
+#               {gap_context}, {field_codes_json}
+# ─────────────────────────────────────────────────────────────────────────────
+GOLD_WOUND_RESPIRATORY_PROMPT = (
+    "You are an expert OASIS-E1 clinical documentation specialist generating a gold-standard "
+    "synthetic patient assessment — Wound, Respiratory, and Medication section.\n\n"
+    + _GOLD_COMMON_HEADER
+    + "\n"
+    + _GOLD_CONTEXT_BLOCK
+    + """
+--- CURRENT MEDICATION LIST (use to derive N0415 flags per Mandatory Rule below) ---
+{medication_json}
+
+MANDATORY RULE — N0415 HIGH-RISK DRUG FLAGS:
+Derive N0415A–I deterministically from the medication list above.
+  N0415A=Antipsychotic, N0415B=Anticoagulant, N0415C=Antibiotic, N0415D=Antiplatelet,
+  N0415E=Hypoglycemic, N0415F=Cardiovascular (digoxin/amiodarone), N0415G=Diuretic,
+  N0415H=Opioid, N0415I=None of above (set '1' only if ALL A–H are '0').
+ALL NINE flags MUST appear in the output.
+
+MANDATORY RULE — BIMS ARITHMETIC CROSS-VERIFY (if BIMS codes appear in this batch):
+  C0300=C0300A+B+C; C0400=C0400A+B+C; C0500=C0200+C0300+C0400.
+  If gap_context value is wrong, correct it and note in rationale.
+
+MANDATORY RULE — PHQ D0160 CROSS-VERIFY (if PHQ codes appear in this batch):
+  screen=D0150A1+D0150B1; if <3: D0160=(A2 if A1=1 else 0)+(B2 if B1=1 else 0).
+
+CLINICAL SCALES:
+  M1306: 0=No pressure ulcer Stage 2+, 1=Yes
+  M1330: 0=No stasis ulcer, 1=Yes observable, 2=Yes not observable
+  M1340: 0=No surgical wound, 1=Yes observable, 2=Yes not observable
+  M1400: 0=No dyspnea, 1=With exertion, 2=With ADLs, 3=At rest
+  M1500: 0=No CHF, 1=Dyspnea/edema with exertion, 2=With ADLs, 3=At rest
+  M1610: 0=Continent, 1=Continent w/catheter, 2=Incontinent ≤50%, 3=>50%, 4=Total
+  M2001: 0=No high-risk meds, 1=Managed well, 2=Managed with difficulty
+  M2020: 0=No oral meds, 1=Able to take correctly, 2=Unable
+  M2030: 0=No injectable, 1=Patient manages, 2=Caregiver, 3=Both, 4=Cannot manage
+  M2040: 0=No IV meds, 1=Patient/carer, 2=HHA, 3=Both
+
+FIELD CODES FOR THIS BATCH:
+{field_codes_json}
+"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — Section Fix Prompt (shared across all gold sections)
+# Placeholders: {section_name}, {violations_list}, {original_items_json},
+#               {archetype}, {diagnosis_context}, {medication_json},
+#               {gap_context}
+# ─────────────────────────────────────────────────────────────────────────────
+GOLD_SECTION_FIX_PROMPT = """\
+You are an expert OASIS-E1 clinical documentation specialist fixing validation errors in a
+gold-standard assessment section.
+
+SECTION: {section_name}
+PATIENT: Archetype={archetype}, Diagnosis={diagnosis_context}
+
+--- STEP 4 GAP ASSESSMENT (AUTHORITATIVE) ---
+{gap_context}
+
+--- MEDICATION LIST ---
+{medication_json}
+
+CURRENT SECTION OUTPUT (contains errors):
+{original_items_json}
+
+VALIDATION VIOLATIONS — fix EVERY one of these:
+{violations_list}
+
+RULES:
+1. Return ONLY a flat JSON object containing the corrected field codes and their values.
+2. Only include fields that need to change or are newly added — do NOT repeat unchanged fields.
+3. Values must be plain strings. Use null (JSON null) for PHQ gate nulled items.
+4. No markdown, no backticks, no explanations.
+
+Return the corrections as:
+{{
+  "FIELD_CODE": "corrected_value",
+  ...
+}}
+"""
+
+# Map from gold section batch name to its focused prompt template.
+# Used by OasisGoldStandardGenerator._generate_and_fix_section_batch().
+GOLD_SECTION_PROMPT_MAP: dict[str, str] = {
+    "A_admin_diagnosis":            GOLD_ADMIN_DIAGNOSIS_PROMPT,
+    "B_sensory_behavioral_living":  GOLD_SENSORY_BEHAVIORAL_PROMPT,
+    "C_gg_self_care":               GOLD_GG_SELF_CARE_PROMPT,
+    "D_gg_mobility_adl":            GOLD_GG_MOBILITY_ADL_PROMPT,
+    "E_wound_respiratory_medication": GOLD_WOUND_RESPIRATORY_PROMPT,
+}
 

@@ -286,6 +286,11 @@ class ConsistencyValidator:
             else:
                 gg0130_letters.add(letter_or_letters)
 
+        # OASIS “unable” codes — refused / not applicable / equipment unavailable / not attempted.
+        # All indicate the patient could not perform the activity; they are clinically equivalent
+        # for consistency-check purposes (skip logic may legitimately substitute one for another).
+        _UNABLE_CODES: frozenset[str] = frozenset({"07", "09", "10", "88"})
+
         for letter in sorted(gg0130_letters):
             code = f"GG0130{letter}1"
             expected_value = _get_expected_gg("GG0130", GG0130_LABEL_TO_LETTER, code, letter, "1")
@@ -293,6 +298,9 @@ class ConsistencyValidator:
             if expected_value is not None:
                 actual = items.get(code)
                 if actual is not None and str(actual).strip() != expected_value.strip():
+                    # Skip if both values represent "unable" — OASIS codes are equivalent
+                    if expected_value.strip() in _UNABLE_CODES and str(actual).strip() in _UNABLE_CODES:
+                        continue
                     errors.append({
                         "check": "gg_consistency",
                         "code": code,
@@ -313,6 +321,9 @@ class ConsistencyValidator:
             if expected_value is not None:
                 actual = items.get(code)
                 if actual is not None and str(actual).strip() != expected_value.strip():
+                    # Skip if both values represent "unable" — OASIS codes are equivalent
+                    if expected_value.strip() in _UNABLE_CODES and str(actual).strip() in _UNABLE_CODES:
+                        continue
                     errors.append({
                         "check": "gg_consistency",
                         "code": code,

@@ -38,10 +38,15 @@ from app.config.constants import (
     WOUND_CODES,
 )
 from app.services.llm.bedrock_client import BedrockClient
-from app.config.prompts import OASIS_GOLD_STANDARD_PROMPT
+from app.config.prompts import (
+    GOLD_SECTION_FIX_PROMPT,
+    GOLD_SECTION_PROMPT_MAP,
+    OASIS_GOLD_STANDARD_PROMPT,
+)
 from app.utils.json_utils import extract_json_object, repair_truncated_json
 from app.utils.logger import get_logger
 from app.utils.gap_answers_utils import lookup_gap_answer as _lookup_gap_answer
+from app.utils.oasis_validators import validate_batch
 
 logger = get_logger(__name__)
 
@@ -133,7 +138,7 @@ class OasisGoldStandardGenerator:
                 continue
 
             logger.info("Step 6: LLM batch %s (%d codes requested)", section_name, len(filtered_codes))
-            batch_items = self._run_llm_batch(
+            batch_items = self._generate_and_fix_section_batch(
                 codes=filtered_codes,
                 section_name=section_name,
                 archetype=archetype,
@@ -930,12 +935,16 @@ class OasisGoldStandardGenerator:
                 lines.append(f"  GG0170 {sub}: {val}")
         else:
             gg0170_lines = []
-            for letter in ["A", "B", "C", "D", "E", "F", "G", "I", "J", "K", "L", "M", "N", "O", "P"]:
+            for letter in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"]:
                 for suffix in ["1", "2"]:
                     code = f"GG0170{letter}{suffix}"
                     val = _lookup_gap_answer(gap_answers, code)
                     if val is not None:
                         gg0170_lines.append(f"  {code}: {val}")
+            # RR only has suffix 1 (admission only)
+            rr1_val = _lookup_gap_answer(gap_answers, "GG0170RR1")
+            if rr1_val is not None:
+                gg0170_lines.append(f"  GG0170RR1: {rr1_val}")
             if gg0170_lines:
                 lines.append("GG0170 Mobility (Step 4 answers):")
                 lines.extend(gg0170_lines)
@@ -1006,6 +1015,105 @@ class OasisGoldStandardGenerator:
 
         return "\n".join(lines) if lines else "(No gap assessment context available)"
 
+    def _generate_and_fix_section_batch(
+        self,
+        *,
+        codes: list[str],
+        section_name: str,
+        archetype: str,
+        diagnosis_context: str,
+        referral_text: str,
+        scribe_section: str,
+        medication_json: str,
+        gap_context: str,
+        has_scribe: str,
+        model_id: str,
+        audit_context: str | None = None,
+    ) -> list[dict]:
+        """Generate a gold standard batch then validate and fix if needed.
+
+        Implements the Generate → Validate → Fix loop for Step 6 section batches:
+          1. LLM call with section-specific focused prompt.
+          2. Python validators check the flat output dict.
+          3. If violations found, one LLM fix call patches only the affected fields.
+
+        Returns a list of item dicts consistent with the existing _run_llm_batch contract.
+        """
+        raw_items = self._run_llm_batch(
+            codes=codes,
+            section_name=section_name,
+            archetype=archetype,
+            diagnosis_context=diagnosis_context,
+            referral_text=referral_text,
+            scribe_section=scribe_section,
+            medication_json=medication_json,
+            gap_context=gap_context,
+            has_scribe=has_scribe,
+            model_id=model_id,
+            audit_context=audit_context,
+        )
+
+        # Build flat {code: value} for validators
+        flat = {
+            item["item_code"]: item.get("value")
+            for item in raw_items
+            if isinstance(item, dict) and "item_code" in item
+        }
+        violations = validate_batch(flat, section_name)
+        if not violations:
+            return raw_items
+
+        # ── Fix pass ─────────────────────────────────────────────────────────
+        logger.warning(
+            "Step 6 section=%s: %d violation(s) — running fix pass",
+            section_name,
+            len(violations),
+        )
+        fix_prompt = GOLD_SECTION_FIX_PROMPT.format(
+            section_name=section_name,
+            violations_list="\n".join(f"- {v}" for v in violations),
+            original_items_json=json.dumps(flat, indent=2),
+            archetype=archetype,
+            diagnosis_context=diagnosis_context,
+            medication_json=medication_json,
+            gap_context=gap_context,
+        )
+        try:
+            fix_response = self.bedrock.invoke_json(
+                prompt=fix_prompt,
+                model_id=model_id,
+                max_tokens=2048,
+            )
+            fix_raw = json.loads(extract_json_object(fix_response["text"].strip()))
+        except Exception as exc:
+            logger.error("Step 6 section=%s fix parse failed (%s) — keeping original", section_name, exc)
+            return raw_items
+
+        if not isinstance(fix_raw, dict):
+            return raw_items
+
+        # Build an index of existing items for fast lookup
+        item_index = {item["item_code"]: item for item in raw_items if "item_code" in item}
+        for code, corrected_value in fix_raw.items():
+            code_upper = code.strip().upper()
+            if code_upper in item_index:
+                item_index[code_upper]["value"] = corrected_value
+                item_index[code_upper]["rationale"] = (
+                    item_index[code_upper].get("rationale", "")
+                    + f" [Fix applied: {', '.join(violations)}]"
+                )
+            else:
+                # New field injected by fix (e.g. missing N0415 sub-code)
+                item_index[code_upper] = {
+                    "item_code": code_upper,
+                    "value": corrected_value,
+                    "rationale": f"Added by fix pass: {', '.join(violations)}",
+                    "confidence": "high",
+                    "source": "fix",
+                }
+        logger.info("Step 6 section=%s: fix pass applied %d correction(s)", section_name, len(fix_raw))
+        return list(item_index.values())
+
     def _run_llm_batch(
         self,
         *,
@@ -1038,17 +1146,24 @@ class OasisGoldStandardGenerator:
         Returns:
             List of item dicts (item_code, value, rationale, confidence, source).
         """
-        prompt = OASIS_GOLD_STANDARD_PROMPT.format(
-            archetype=archetype,
-            diagnosis_context=diagnosis_context,
-            has_scribe=has_scribe,
-            section_name=section_name,
-            referral_text=referral_text,
-            scribe_section=scribe_section,
-            medication_json=medication_json,
-            gap_context=gap_context,
-            field_codes_json=json.dumps(codes, indent=2),
-        )
+        # Select focused section prompt; fall back to monolithic prompt for unknown sections
+        prompt_template = GOLD_SECTION_PROMPT_MAP.get(section_name, OASIS_GOLD_STANDARD_PROMPT)
+
+        # Build format kwargs — Batch E needs {medication_json}; others typically don't.
+        fmt_kwargs: dict = {
+            "archetype": archetype,
+            "diagnosis_context": diagnosis_context,
+            "has_scribe": has_scribe,
+            "section_name": section_name,
+            "referral_text": referral_text,
+            "scribe_section": scribe_section,
+            "gap_context": gap_context,
+            "field_codes_json": json.dumps(codes, indent=2),
+        }
+        if "{medication_json}" in prompt_template:
+            fmt_kwargs["medication_json"] = medication_json
+
+        prompt = prompt_template.format(**fmt_kwargs)
 
         if audit_context:
             prompt += f"\n\n{audit_context}"
@@ -1152,7 +1267,11 @@ class OasisGoldStandardGenerator:
         rules_applied: list[str] = []
 
         # ── 1. BIMS_GATE: C0100=0 → null BIMS sub-scores ─────────────────────────────────
-        if _item_value(item_map, "C0100") == "0":
+        # Only apply when C0100 was generated by the LLM — if it was copied verbatim from
+        # gap_answers (source="gap_answers"), gap is authoritative and we preserve sub-scores.
+        c0100_item = item_map.get("C0100")
+        c0100_from_gap = c0100_item and c0100_item.get("source") == "gap_answers"
+        if _item_value(item_map, "C0100") == "0" and not c0100_from_gap:
             bims_downstream = [
                 "C0200", "C0300A", "C0300B", "C0300C",
                 "C0400A", "C0400B", "C0400C", "C0500",
@@ -1218,28 +1337,39 @@ class OasisGoldStandardGenerator:
             rules_applied.append("M1330_STASIS")
 
         # ── 6. GG_WALK_HIERARCHY: GG0170I1 unable → skip J/K/L walk items ────────────────
+        # Only override items that were NOT already sourced from gap_answers (gap is authoritative).
         i1_val = _item_value(item_map, "GG0170I1")
         if i1_val in {"07", "09", "10", "88"}:
+            walk_modified = False
             for code in ["GG0170J1", "GG0170K1", "GG0170L1"]:
-                if code in item_map:
-                    item_map[code]["value"] = "88"
-                    item_map[code]["rationale"] = (
+                target = item_map.get(code)
+                if target and target.get("source") != "gap_answers":
+                    target["value"] = "88"
+                    target["rationale"] = (
                         f"Skip: GG0170I1={i1_val} — patient cannot walk 10 ft; "
                         "longer walking activities not attempted"
                     )
-            rules_applied.append("GG_WALK_HIERARCHY")
+                    walk_modified = True
+            if walk_modified:
+                rules_applied.append("GG_WALK_HIERARCHY")
 
-        # ── 7. GG_STAIR_HIERARCHY: GG0170M1 unable → skip N/O stair items ───────────────
+        # ── 7. GG_STAIR_HIERARCHY: GG0170M1 unable → skip N stair items ──────────────────
+        # NOTE: GG0170O (Picking Up Object) is NOT a stair task — it is independent of M.
+        # Only override GG0170N1 and only when not sourced from gap_answers.
         m1_val = _item_value(item_map, "GG0170M1")
         if m1_val in {"07", "09", "10", "88"}:
-            for code in ["GG0170N1", "GG0170O1"]:
-                if code in item_map:
-                    item_map[code]["value"] = "88"
-                    item_map[code]["rationale"] = (
-                        f"Skip: GG0170M1={m1_val} — patient cannot climb 1 step; "
-                        "multi-step stair activities not attempted"
+            stair_modified = False
+            for code in ["GG0170N1"]:
+                target = item_map.get(code)
+                if target and target.get("source") != "gap_answers":
+                    target["value"] = "88"
+                    target["rationale"] = (
+                        f"Skip: GG0170M1={m1_val} — patient cannot climb 4 steps; "
+                        "12-step stair activity not attempted"
                     )
-            rules_applied.append("GG_STAIR_HIERARCHY")
+                    stair_modified = True
+            if stair_modified:
+                rules_applied.append("GG_STAIR_HIERARCHY")
 
         # ── 8. M1740_EXCLUSIVE: code "7" (None of above) is exclusive ────────────────────
         m1740_val = _item_value(item_map, "M1740")
