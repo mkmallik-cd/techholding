@@ -65,6 +65,68 @@ class OasisGoldStandardGenerator:
     def __init__(self) -> None:
         # Initialise the shared Bedrock LLM client.
         self.bedrock = BedrockClient()
+        # Load oasis_config.json for per-group coding guidance injection.
+        self._oasis_config_groups: list[dict] = self._load_oasis_config()
+        # Build field_code → group_guidance lookup (only real OASIS groups).
+        self._field_guidance_map: dict[str, str] = {}
+        self._field_group_name_map: dict[str, str] = {}
+        for group in self._oasis_config_groups:
+            guidance = group.get("group_guidance", "")
+            group_name = group.get("group_name", "")
+            if not guidance:
+                continue
+            for field in group.get("fields", []):
+                self._field_guidance_map[field] = guidance
+                self._field_group_name_map[field] = group_name
+
+    @staticmethod
+    def _load_oasis_config() -> list[dict]:
+        """Load oasis_config.json from the app config directory.
+
+        Returns empty list on failure so the generator degrades gracefully.
+        """
+        import os
+        config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "config")
+        default_path = os.path.normpath(os.path.join(config_dir, "oasis_config.json"))
+        path = os.environ.get("OASIS_CONFIG_PATH", default_path)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                logger.info(
+                    "OasisGoldStandardGenerator: loaded oasis_config with %d groups from %s",
+                    len(data), path,
+                )
+                return data
+        except FileNotFoundError:
+            logger.warning(
+                "OasisGoldStandardGenerator: oasis_config.json not found at %s — "
+                "per-group coding guidance will not be injected",
+                path,
+            )
+        except Exception as exc:
+            logger.error("OasisGoldStandardGenerator: failed to load oasis_config: %s", exc)
+        return []
+
+    def _build_oasis_guidance_for_codes(self, codes: list[str]) -> str:
+        """Return consolidated group_guidance text for all oasis_config groups
+        whose fields overlap with *codes*.
+
+        Groups are de-duplicated; only groups that have non-empty guidance and
+        contain at least one real OASIS code (not non_oasis_*) are included.
+        """
+        seen_guidances: dict[str, str] = {}  # group_name → guidance
+        for code in codes:
+            group_name = self._field_group_name_map.get(code)
+            guidance = self._field_guidance_map.get(code)
+            if group_name and guidance and group_name not in seen_guidances:
+                seen_guidances[group_name] = guidance
+        if not seen_guidances:
+            return ""
+        parts = [
+            f"### {name}\n{text}" for name, text in seen_guidances.items()
+        ]
+        return "\n\n".join(parts)
 
     def generate(
         self,
@@ -126,13 +188,15 @@ class OasisGoldStandardGenerator:
         gap_context = self._build_gap_context(gap_answers)
 
         all_llm_items: list[dict] = []
+        groups_completed = 0
+        groups_failed = 0
         for section_name, codes in OASIS_SECTION_BATCHES:
-            # PRD: Clinical archetype based filtering. 
+            # PRD: Clinical archetype based filtering.
             # If patient is not wound-bearing, omit wound-specific codes from the batch request.
             filtered_codes = codes
             if archetype not in WOUND_ARCHETYPES:
                 filtered_codes = [c for c in codes if c not in WOUND_CODES]
-                
+
             if not filtered_codes:
                 logger.info("Step 6: Skipping LLM batch %s (no relevant codes for archetype %s)", section_name, archetype)
                 continue
@@ -152,6 +216,7 @@ class OasisGoldStandardGenerator:
                 audit_context=audit_context,
             )
             all_llm_items.extend(batch_items)
+            groups_completed += 1
             logger.info("Step 6: batch %s produced %d items", section_name, len(batch_items))
 
         # Build item_map: LLM items first, then Gap-derived items overwrite.
@@ -182,8 +247,16 @@ class OasisGoldStandardGenerator:
         )
 
         # PRD Section 2.3 format: a flat key-value object mapping every OASIS item code to its correct value.
-        output_dict = {
-            "_synthetic_label": "SYNTHETIC \u2014 NOT REAL PATIENT DATA"
+        # Format matches SYN_0024 reference: includes metadata fields + _items_detail rationale array.
+        _METADATA_KEYS = {"patient_id", "generated_at", "use_rag", "groups_completed", "groups_failed", "total_fields"}
+        output_dict: dict = {
+            "_generated": True,
+            "_note": "SYNTHETIC \u2014 NOT REAL PATIENT DATA",
+            "patient_id": metadata.get("patient_id", "UNKNOWN"),
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+            "use_rag": True,
+            "groups_completed": groups_completed,
+            "groups_failed": groups_failed,
         }
 
         # Non-OASIS narrative keys that should never appear in the gold standard output.
@@ -270,8 +343,32 @@ class OasisGoldStandardGenerator:
             # Skip parent codes if they are null or empty (they have sub-codes like M1023_1)
             if code in parent_codes and (val is None or str(val).strip() == ""):
                 continue
-                
+
             output_dict[code] = val
+
+        # Set total_fields = count of OASIS field codes only (excludes metadata and underscore keys).
+        output_dict["total_fields"] = sum(
+            1 for k in output_dict
+            if not k.startswith("_") and k not in _METADATA_KEYS
+        )
+
+        # O0110 fields are binary 0/1 flags; normalise any "NA" the LLM wrote to "0".
+        for key in list(output_dict.keys()):
+            if key.startswith("O0110") and output_dict[key] == "NA":
+                output_dict[key] = "0"
+
+        # Append _items_detail: full rationale + confidence for every OASIS field.
+        output_dict["_items_detail"] = [
+            {
+                "item_code": item["item_code"],
+                "value": item.get("value"),
+                "rationale": item.get("rationale", ""),
+                "confidence": item.get("confidence", "high"),
+                "status": "completed",
+            }
+            for item in final_items
+            if item.get("item_code") and not item["item_code"].startswith("_")
+        ]
 
         return output_dict
 
@@ -1164,6 +1261,25 @@ class OasisGoldStandardGenerator:
             fmt_kwargs["medication_json"] = medication_json
 
         prompt = prompt_template.format(**fmt_kwargs)
+
+        # Append medication list for batches that don't already embed it (A–D).
+        # RAG is skipped in patient-dataset-generation — all source docs are injected
+        # directly. Medication is a source doc and must reach every batch since it
+        # affects fields across all sections (e.g. M1033 risk factors, M1400 dyspnea).
+        if "{medication_json}" not in prompt_template and medication_json:
+            prompt += f"\n\n--- MEDICATION LIST (reference for all fields) ---\n{medication_json}\n"
+
+        # Append per-field OASIS coding guidance extracted from oasis_config.json.
+        # This injects the same group_guidance used by oasis-llm-processor and
+        # prompt-improvement into the gold-standard generation step so the LLM
+        # produces consistent, rule-conformant values.
+        oasis_guidance_block = self._build_oasis_guidance_for_codes(codes)
+        if oasis_guidance_block:
+            prompt += (
+                "\n\n--- OASIS CODING GUIDANCE (per-field rules from oasis_config) ---\n"
+                + oasis_guidance_block
+                + "\n"
+            )
 
         if audit_context:
             prompt += f"\n\n{audit_context}"
