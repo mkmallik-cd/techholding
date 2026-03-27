@@ -135,27 +135,40 @@ def generate_oasis_gold_standard(self, *, job_id: str, is_audit_fix: bool = Fals
             oasis_gold_standard=oasis_gold_standard,
         )
 
-        repo.advance_to_next_step(
-            job,
-            next_phase="step6_consistency_validation",
-            step_result_payload={
-                **metadata,
-                "oasis_gold_standard_path": artifact_path + "/oasis_gold_standard.json",
-            },
-            step_artifact_path=artifact_path,
-        )
-        logger.info(
-            "Step 6 completed, dispatching Step 7: job_id=%s patient=%s",
-            job_id,
-            job.patient_external_id,
-        )
-
-        from app.workers.tasks.consistency_validation_tasks import validate_consistency
-        validate_consistency.apply_async(
-            kwargs={"job_id": job_id},
-            queue=_STEP6_QUEUE,
-            routing_key=_STEP6_QUEUE,
-        )
+        updated_payload = {
+            **metadata,
+            "oasis_gold_standard_path": artifact_path + "/oasis_gold_standard.json",
+        }
+        ask_validation = (job.request_payload or {}).get("ask_validation", False)
+        if ask_validation:
+            repo.advance_to_next_step(
+                job,
+                next_phase="step6_consistency_validation",
+                step_result_payload=updated_payload,
+                step_artifact_path=artifact_path,
+            )
+            logger.info(
+                "Step 6 completed, dispatching Step 7: job_id=%s patient=%s",
+                job_id,
+                job.patient_external_id,
+            )
+            from app.workers.tasks.consistency_validation_tasks import validate_consistency
+            validate_consistency.apply_async(
+                kwargs={"job_id": job_id},
+                queue=_STEP6_QUEUE,
+                routing_key=_STEP6_QUEUE,
+            )
+        else:
+            repo.mark_completed(
+                job,
+                artifact_path=artifact_path,
+                result_payload=updated_payload,
+            )
+            logger.info(
+                "Step 6 completed (validation skipped): job_id=%s patient=%s",
+                job_id,
+                job.patient_external_id,
+            )
 
     except Exception as exc:
         logger.error("Step 6 task failed: job_id=%s error=%s", job_id, exc, exc_info=True)

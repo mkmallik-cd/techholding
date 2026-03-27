@@ -11,6 +11,13 @@ class EnqueuePatientGenerationRequest(BaseModel):
     patient_external_id: str = Field(default="SYN_0001", min_length=3, max_length=100)
     model_id: str | None = Field(default=None, description="Optional Bedrock model id override")
     hardcoded_seed: str = Field(default="default-step1-seed", min_length=3, max_length=100)
+    ask_validation: bool = Field(
+        default=False,
+        description=(
+            "When true, run Step 7 deterministic consistency validation after Step 6. "
+            "When false (default), Step 7 is skipped and the job is marked completed after Step 6."
+        ),
+    )
     perform_llm_audit: bool = Field(
         default=False,
         description=(
