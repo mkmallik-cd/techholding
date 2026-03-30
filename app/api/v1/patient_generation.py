@@ -65,37 +65,42 @@ def get_step1_job_status(job_id: UUID, db: Session = Depends(get_db)):
 
 @router.post("/{job_id}/repair", response_model=JobStatusResponse)
 def trigger_manual_repair(job_id: UUID, db: Session = Depends(get_db)):
-    """Manually trigger the repair chain for a job that is in INVALID status.
+    """Manually trigger an LLM-audit retry for a job that completed with audit conflicts.
 
-    Only valid for jobs with status=INVALID (not INVALID_PERMANENT).
-    Increments repair_attempt and queues the repair_gap_answers task.
+    Re-runs the full pipeline from Step 2 with is_audit_fix=True so the generators
+    receive the audit conflict context.  Only valid when repair_attempt < 3.
     """
-    from app.workers.celery_app import _STEP4_QUEUE
-    from app.workers.tasks.repair_tasks import repair_gap_answers
+    from app.workers.celery_app import _STEP2_QUEUE
+    from app.workers.tasks.referral_packet_tasks import generate_referral_packet
 
     repo = PatientGenerationRepository(db)
     job = repo.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status != JobStatus.INVALID:
+    if job.status != JobStatus.COMPLETED:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"job status is '{job.status.value}'; repair is only available for status='invalid'"
+                f"job status is '{job.status.value}'; manual repair requires status='completed'"
             ),
+        )
+    if (job.repair_attempt or 0) >= 3:
+        raise HTTPException(
+            status_code=409,
+            detail="max repair attempts (3) already reached",
         )
 
     repo.increment_repair_attempt(job)
     repo.advance_to_next_step(
         job,
-        next_phase="repair_gap_answers",
+        next_phase="step2_referral_packet",
         step_result_payload=job.result_payload or {},
         step_artifact_path=job.artifact_path or "",
     )
-    repair_gap_answers.apply_async(
-        kwargs={"job_id": str(job_id)},
-        queue=_STEP4_QUEUE,
-        routing_key=_STEP4_QUEUE,
+    generate_referral_packet.apply_async(
+        kwargs={"job_id": str(job_id), "is_audit_fix": True},
+        queue=_STEP2_QUEUE,
+        routing_key=_STEP2_QUEUE,
     )
 
     return JobStatusResponse(

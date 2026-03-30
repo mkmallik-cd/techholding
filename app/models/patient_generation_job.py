@@ -23,7 +23,7 @@ class PatientGenerationJob(Base):
 
     job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_external_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    phase: Mapped[str] = mapped_column(String(30), nullable=False, default="step1_metadata")
+    phase: Mapped[str] = mapped_column(String(40), nullable=False, default="step1_metadata")
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="job_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,

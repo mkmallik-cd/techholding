@@ -1,0 +1,643 @@
+﻿GOLD STANDARD PROMPT 
+REVISION 
+
+OASIS_GOLD_STANDARD_PROMPT  ·  oasis_gold_standard.json Generation  ·  Step 
+6 
+
+All bugs sourced from SYN_0001 validation report + arithmetic verification 
+
+ 
+
+Metric Value 
+
+Root cause OASIS_GOLD_STANDARD_PROMPT inherits 
+corrupted gap values AND has independent 
+generation errors. Even after correcting the gap 
+prompt, the gold standard prompt has 7 additional 
+bugs that must be fixed. 
+
+Upstream dependency gap_context feeds gold standard — gap prompt 
+bugs fixed first (previous revision). Gold prompt 
+bugs listed here are independent of gap. 
+
+Bugs in current gold prompt 7 (2 structural, 1 field definition, 2 arithmetic, 1 
+propagation, 1 placeholder) 
+
+Fields wrong in SYN_0001 8 missing admission GG codes + 4 wrong N0415 
+gold flags + C0400 arithmetic + 
+
+PHQ_MOOD_INTERVIEW + A1010 = 15+ 
+corrupted fields 
+
+New placeholder {medication_json} replaces {medication_summary} 
+for deterministic N0415 
+
+Downstream impact Every wrong gold field = one corrupt training 
+example fed to the OAPI optimizer 
+
+  
+
+
+
+1. Complete Bug Inventory — Gold Standard Prompt 
+ 
+
+# Bug Effect on Severity 
+oasis_gold_standard.json 
+
+BUG-1 A1010 field: street A1010 in OASIS-E1 is a Race field HIGH — wrong field 
+address instead of (multi-select flags). Gold has a street value 
+Race/Ethnicity flags address there. Optimizer reads A1010 
+
+expecting a race code, receives a 
+street address — corrupted training 
+slot. 
+
+BUG-2 PHQ_MOOD_INTERVIEW Not an OASIS-E1 item code. Optimizer HIGH — invalid key in 
+key in output does exact key matching — this key gold 
+
+either errors out or silently wastes a 
+training slot. 
+
+BUG-3 {medication_summary} Prompt receives narrative med CRITICAL — wrong 
+is text, not structured summary. LLM can't reliably parse drug training signal 
+JSON — N0415 flags names to binary flags → N0415E=0 
+wrong (Warfarin missed), N0415F=0 (Digoxin 
+
+missed). 4+ wrong N0415 flags. 
+
+BUG-4 GG admission codes Gap had generic GG0130/GG0170 root CRITICAL — missing 
+(X1) missing for 8 codes. Gold prompt mapping rule lists training slots 
+activities only A–K for GG0170, misses 
+
+D1/E1/F1 and all of A1–F1 except G1. 
+8 mandatory admission codes absent 
+from gold. 
+
+BUG-5 BIMS C0400 grouping Gap had C0400=5 while HIGH — arithmetic 
+total not re-verified in C0400A+B+C=6. Gold prompt propagation 
+gold propagates gap value verbatim without 
+
+checking arithmetic → C0400 mismatch 
+persists into gold standard. 
+
+BUG-6 PHQ D0160 not re- Gap had D0160=4 (wrong — should be HIGH — arithmetic 
+verified in gold prompt 2 on negative screen). Gold prompt propagation 
+
+propagates without checking PHQ-2 
+gate arithmetic. 
+
+BUG-7 Authority rule too weak Current rule says 'use Step 4 HIGH — consistency 
+— gold re-derives values DIRECTLY as the basis' but no violations 
+that gap has already enforcement. LLM re-derives clinical 
+answered values and diverges (20 mismatches 
+
+found between gold and gap in 
+SYN_0001). 
+
+  
+
+
+
+2. All Changes — Annotated Comparison Table 
+ 
+
+Section / Field Status What Changed & OLD NEW 
+Why 
+
+A1010 in output FIXED A1010 is the OASIS-E1 "A1010": "2847 A1010 = Race flag 
+
+Race field (multi-select Maple Grove (e.g. "5" = White). 
+
+flags). The current Lane..." Address must NOT 
+
+prompt has no A1010 appear in gold 
+
+rule and the LLM fills it standard. 
+with whatever narrative 
+text is nearby (e.g. street 
+address). Added explicit 
+prohibition: A1010 must 
+never contain address 
+data; if included in the 
+batch, it should receive 
+the correct race flag 
+value from the referral. 
+
+PHQ_MOOD_INTERVIEW REMOVED Not an OASIS-E1 item "PHQ_MOOD_INTERVIEW (removed — not an 
+
+code. The output rules ": "completed" OASIS code) 
+previously permitted 
+free-text keys, and the 
+LLM consistently adds 
+PHQ_MOOD_INTERVIE
+W to the gold standard 
+output. New OUTPUT 
+SCOPE RULE explicitly 
+lists it as forbidden. 
+
+{medication_summar FIXED Old placeholder was a {medication_summary {medication_json} 
+
+y} narrative text summary. } (narrative text) (structured JSON with 
+
+LLM cannot reliably is_high_risk flags) 
+extract drug class 
+membership from prose 
+to set binary N0415 
+flags. Replaced with 
+{medication_json} 
+(structured JSON with 
+is_high_risk boolean per 
+drug). Same approach 
+as corrected gap prompt. 
+
+GG0170 admission FIXED Old propagation rule GG0170 'A'→A1/A2, GG0170A1 Roll L/R ← 
+
+codes listed 'A→A1/A2, 'B'→B1/B2... (6 MUST emit GG0170B1 Sit 
+
+B→B1/B2, C→C1/C2, admission codes to Lying ← MUST emit 
+
+D→D1/D2, E→E1/E2, missing in output) GG0170C1 Lying to 
+
+F→F1/F2, I→I1/I2...' — Sitting ← MUST emit 
+GG0170D1/E1/F1 ← MUST 
+
+BUT the gap file had 
+emit + all X2 
+
+generic GG0170 root 
+discharge goals 
+
+codes, so the LLM only 
+emitted the codes it 
+could match. Result: 
+GG0170A1–F1 (6 
+admission codes) are 
+completely absent from 
+the gold standard. New 
+rule enumerates all 16 
+X1 codes by name with 
+'MUST emit' markers. 
+
+GG0130D1 / FIXED Upper Body Dressing GG0130D1: MISSING GG0130D1 / GG0130D2 = 
+
+GG0130E1 and Lower Body GG0130E1: MISSING Upper Body Dressing ← 
+
+Dressing admission MUST emit GG0130E1 / 
+
+codes absent from gold GG0130E2 = Lower Body 
+
+standard because gap Dressing ← MUST emit 
+had generic GG0130 
+
+
+
+root codes for these 
+activities. New rule 
+explicitly names D1 and 
+E1 with 'frequently 
+missing — MUST emit' 
+annotation. 
+
+BIMS arithmetic ADDED_RUL Gold prompt propagated (absent — no MANDATORY RULE 2: 
+
+verify E C0400=5 from gap even arithmetic verify 
+
+though C0400A+B+C=6. verification) C0300=C0300A+B+C, 
+
+New MANDATORY C0400=C0400A+B+C, 
+
+RULE 2 requires the C0500=C0200+C0300+C040
+0. Correct and note in 
+
+gold prompt to verify 
+rationale if gap value 
+
+BIMS two-level 
+is wrong. 
+
+arithmetic and silently 
+correct grouping totals if 
+they disagree with sub-
+scores. 
+
+PHQ D0160 verify ADDED_RUL Gold prompt propagated (absent — no PHQ MANDATORY RULE 3: 
+
+E D0160=4 from gap even arithmetic verify) verify screen_score, 
+
+though screen=2 check PHQ-2 gate, 
+
+(negative) → correct recompute D0160 if 
+
+value is 2. New needed. Correct 
+silently and note in 
+
+MANDATORY RULE 3 
+rationale. 
+
+requires verification of 
+PHQ-2 gate and 
+correction if gap D0160 
+is inconsistent. 
+
+Authority rule TIGHTENED Old rule said 'use Step 4 Use the Step 4 For EVERY field in 
+
+values DIRECTLY as the values DIRECTLY as gap_context: copy 
+
+basis'. LLM interpreted the basis — do NOT value VERBATIM. Do NOT 
+
+this loosely and re- re-derive from re-derive, re-
+
+derived 20 fields documents. interpret, or 
+override. Rationale 
+
+independently 
+MUST state 'Propagated 
+
+(mismatches found: 
+verbatim from Step 4 
+
+B1300, J0520, M1500, gap assessment.' 
+M1600, M1610, M1630, 
+M2020, M2030, M2040, 
+etc.). New rule is 
+unambiguous: for every 
+field in gap_context, 
+copy verbatim, rationale 
+must say 'Propagated 
+verbatim from Step 4 
+gap assessment'. 
+
+N0415 derivation ADDED_RUL No explicit N0415 rule (absent — no N0415 MANDATORY RULE 4: read 
+
+rule E existed in gold prompt. rule) medication_json, 
+
+LLM guessed from derive N0415A–N0415I 
+
+narrative and produced flags. 
+
+N0415E=0 (missed Warfarin→N0415B='1', 
+Digoxin→N0415F='1'. 
+
+Warfarin as 
+All 9 sub-codes MUST 
+
+anticoagulant), 
+appear in output. 
+
+N0415F=0 (missed 
+Digoxin), 
+N0415A/B/C/D/G 
+missing entirely. New 
+MANDATORY RULE 4 
+provides full drug class 
+→ sub-code mapping 
+table, derived from 
+medication_json. 
+
+Output scope rule ADDED No upfront scope (absent) ⚠️ OUTPUT SCOPE RULE 
+
+constraint. LLM routinely block: 
+
+adds PHQ_MOOD_INTERVIEW, 
+
+PHQ_MOOD_INTERVIE ALLERGIES, 
+
+W and occasionally other VITAL_SIGNS, 
+CIRCULATORY_HISTORY, 
+
+
+
+EHR narrative keys. New MENTAL_STATUS, etc. 
+
+OUTPUT SCOPE RULE are FORBIDDEN. Skip 
+
+block at top of prompt non-OASIS codes 
+
+names forbidden keys entirely. 
+and states 'skip it 
+entirely'. 
+
+  
+
+
+
+3. GG Code Completeness — Before vs. After 
+The gold standard in SYN_0001 is missing 8 mandatory admission codes. The root cause is that the gap file had 
+generic root codes (GG0170, GG0130 without suffixes) which the gold prompt could not map to specific activities. 
+The corrected gold prompt enumerates every required code explicitly. 
+
+ 
+
+Activity X1 X2 (DC SYN_0001 Gold After Fix 
+(Admission) Goal) Status 
+
+GG0130A — Eating GG0130A1 GG0130A2 ✅ Present (05) ✅ Emit from gap 
+
+GG0130B — Oral GG0130B1 GG0130B2 ✅ Present (04) ✅ Emit from gap 
+Hygiene 
+
+GG0130C — GG0130C1 GG0130C2 ✅ Present (02) ✅ Emit from gap 
+Shower/Bathe 
+
+GG0130D — Upper GG0130D1 GG0130D2 ❌ MISSING ✅ MUST emit — explicit 
+Body Dressing in rule 
+
+GG0130E — Lower GG0130E1 GG0130E2 ❌ MISSING ✅ MUST emit — explicit 
+Body Dressing in rule 
+
+GG0130F — GG0130F1 GG0130F2 ✅ Present (03) ✅ Emit from gap 
+Toileting Hygiene 
+
+GG0170A — Roll GG0170A1 GG0170A2 ❌ MISSING ✅ MUST emit — explicit 
+Left/Right in rule 
+
+GG0170B — Sit to GG0170B1 GG0170B2 ❌ MISSING ✅ MUST emit — explicit 
+Lying in rule 
+
+GG0170C — Lying to GG0170C1 GG0170C2 ❌ MISSING ✅ MUST emit — explicit 
+Sitting in rule 
+
+GG0170D — Sit to GG0170D1 GG0170D2 ❌ MISSING ✅ MUST emit — explicit 
+Stand in rule 
+
+GG0170E — GG0170E1 GG0170E2 ❌ MISSING ✅ MUST emit — explicit 
+Chair/Bed Transfer in rule 
+
+GG0170F — Toilet GG0170F1 GG0170F2 ❌ MISSING ✅ MUST emit — explicit 
+Transfer in rule 
+
+GG0170G — Car GG0170G1 GG0170G2 ✅ Present (03) ✅ Emit from gap 
+Transfer 
+
+GG0170RR — Wheel GG0170RR1 (no X2) ✅ Present (3) ✅ Emit from gap 
+50 ft 
+
+  
+
+
+
+4. N0415 Flags — Before vs. After 
+In SYN_0001, only 4 N0415 sub-codes appear in the gold standard (E, F, H, I — all set to '0'). Sub-codes A, B, C, 
+D, G are completely absent. Both Warfarin (anticoagulant → N0415B) and Digoxin (cardiovascular → N0415F) are 
+in the medication list as is_high_risk=true, but are coded as '0' because the prompt had no N0415 rule and no 
+structured medication input. 
+
+ 
+
+Code Drug Class Triggered by SYN_0001 After Fix 
+
+N0415A Antipsychotic haloperidol, quetiapine, MISSING 0 (none in med list) 
+risperidone, olanzapine 
+
+N0415B Anticoagulant warfarin ✓ MISSING 1 ← CORRECTED 
+is_high_risk=true in med 
+list 
+
+N0415C Antibiotic any systemic antibiotic MISSING 0 (none in med list) 
+
+N0415D Antiplatelet aspirin ≥325mg, MISSING 0 (none in med list) 
+clopidogrel, ticagrelor 
+
+N0415E Hypoglycemic insulin, metformin, 0 (wrong) 0 (no insulin — 
+glipizide, etc. CHF) 
+
+N0415F Cardiovascular digoxin ✓ 0 (WRONG) 1 ← CORRECTED 
+is_high_risk=true in med 
+list 
+
+N0415G Diuretic furosemide, torsemide, MISSING 1 (furosemide in 
+bumetanide, HCTZ CHF) 
+
+N0415H Opioid oxycodone, morphine, 0 0 (no opioids) 
+hydromorphone, fentanyl 
+
+N0415I None of above set 1 only if ALL A-H are 0 0 0 (B, F, G are 1) 
+
+  
+
+
+
+5. Arithmetic Verification Rules — Side by Side 
+
+5.1  BIMS C0400 Propagation Bug 
+
+❌  CURRENT (no verification) ✅  CORRECTED (verifies before writing) 
+
+Gold prompt receives gap_context with: MANDATORY RULE 2 — verify before writing: 
+  C0400A = 2, C0400B = 2, C0400C = 2   Step A: C0300 = C0300A+C0300B+C0300C 
+  C0400  = 5  ← wrong in gap file   Step B: C0400 = C0400A+C0400B+C0400C 
+
+   Step C: C0500 = C0200+C0300+C0400 
+
+Rule says: 'use Step 4 values DIRECTLY'  
+
+Result: C0400=5 copied verbatim into gold If gap C0400 ≠ computed value: 
+
+But C0400A+B+C = 6 ≠ 5  → arithmetic inconsistency → Use computed value in gold standard 
+preserved in gold standard → Rationale: 'C0400 corrected: sub-scores sum to 6, 
+
+gap had 5' 
+
+ 
+
+5.2  PHQ D0160 Propagation Bug 
+
+❌  CURRENT (no verification) ✅  CORRECTED (re-checks gate) 
+
+Gap file has: MANDATORY RULE 3 — re-verify: 
+  D0150A1=1, D0150B1=1  → screen=2   screen = D0150A1 + D0150B1 
+(negative)   if screen < 3 (negative): 
+  D0160=4  ← wrong (should be 2)     D0160 = (A2 if A1=1 else 0) 
+
+            + (B2 if B1=1 else 0) 
+
+RULE 6 in current prompt says:  
+'D0160 = only A2+B2 (if present)' If gap D0160 ≠ computed value: 
+But no instruction to verify gap_context D0160 → Use correct computed value in gold 
+Result: D0160=4 propagated into gold standard → Rationale: 'D0160 corrected: negative screen (score 
+
+2), correct total = 2' 
+
+  
+
+
+
+6. Authority Rule — Gap vs. Re-Derivation 
+20 mismatches were found between gold standard and gap answers in SYN_0001. Some are legitimate (gold is 
+more clinically accurate), but most represent the LLM ignoring the gap answers and re-deriving from documents. 
+The new authority rule eliminates re-derivation for any field present in gap_context. 
+
+ 
+
+Field Gold Gap Status Verdict 
+
+D0160 2 4 Gold CORRECT Gap wrong (PHQ-2 gate violation). Gold 
+prompt must verify and correct — new 
+RULE 3 handles this. 
+
+B1300 0 2 Investigate Gap=2 (moderate health literacy issue) 
+vs Gold=0. Clinical docs support 
+moderate literacy needs — gap may be 
+correct. Authority rule: gold must 
+propagate gap value if gap is corrected 
+upstream. 
+
+J0520 0 1 Gold CORRECT Pain not affecting sleep documented in 
+scribe. Gap answer appears wrong. Gold 
+re-derivation was correct here — shows 
+authority rule must apply only when gap 
+is accurate. 
+
+M1005 03062026 2026-03-06 Format only Same date, different format. Gold uses 
+MMDDYYYY (correct). Gap uses ISO. 
+Gold formatting rule is correct — no 
+content mismatch. 
+
+M1500 2 1 Gold CORRECT CHF patient with dyspnea with ADLs → 
+M1500=2. Gap=1 (dyspnea with exertion 
+only) appears under-coded. Gold 
+correctly re-derived. 
+
+M1600 1 2 Investigate M1600=1 (treated for UTI) vs M1600=2. 
+Neither is clearly documented for CHF 
+patient. Both may be wrong — clinical 
+review needed. 
+
+M2020 1 2 Gold likely M2020=1 (able to take correctly) vs 
+correct gap=2 (unable). Scribe documents med 
+
+compliance. Gap over-coded. 
+
+M1740 7 ['None'] Gold CORRECT Gap has wrong type (array). Gold='7' 
+(none of above) is correct coded value. 
+
+M1028 0 {dict} Gold CORRECT Gap has wrong type (dict of diagnoses). 
+M1028 is 0=No/1=Yes for PVD. Gold=0 
+correct format. 
+
+ 
+
+Key insight: the authority rule (copy gap verbatim) only works correctly AFTER the gap prompt fixes are applied. 
+For arithmetic errors (D0160, C0400), the gold prompt must still verify and correct — this is why MANDATORY 
+RULES 2 and 3 were added to the gold prompt independently. 
+
+  
+
+
+
+7. Implementation — Placeholder Change 
+{medication_summary} is replaced by {medication_json}. The pipeline call site must be updated. 
+
+ 
+
+Pipeline Call Site Update 
+ 
+# OLD call site 
+prompt = OASIS_GOLD_STANDARD_PROMPT.format( 
+    archetype=archetype, 
+    diagnosis_context=diagnosis_context, 
+    has_scribe=has_scribe, 
+    section_name=section_name, 
+    referral_text=referral_text, 
+    scribe_section=scribe_section, 
+    medication_summary=medication_summary_text,  # ← narrative text 
+    gap_context=gap_context, 
+    field_codes_json=field_codes_json, 
+) 
+
+ 
+# NEW call site 
+import json 
+med_json_str = json.dumps(medication_list_dict, indent=2) 
+ 
+prompt = OASIS_GOLD_STANDARD_PROMPT.format( 
+    archetype=archetype, 
+    diagnosis_context=diagnosis_context, 
+    has_scribe=has_scribe, 
+    section_name=section_name, 
+    referral_text=referral_text, 
+    scribe_section=scribe_section, 
+    medication_json=med_json_str,               # ← structured JSON 
+    gap_context=gap_context, 
+    field_codes_json=field_codes_json, 
+) 
+
+ 
+
+Recommended Post-Processing Validator 
+Even with corrected prompts, a Python validator on the gold standard output catches any remaining arithmetic slip. 
+
+ 
+def validate_gold_standard(gold: dict) -> list[str]: 
+    errors = [] 
+    # Forbidden keys 
+    forbidden = {'PHQ_MOOD_INTERVIEW', 'ALLERGIES', 'VITAL_SIGNS', 'CIRCULATORY_HISTORY'} 
+    for k in gold: 
+        if k in forbidden: 
+            errors.append(f'Forbidden key in gold: {k}') 
+    # BIMS arithmetic 
+    if all(k in gold for k in ['C0300A','C0300B','C0300C','C0300']): 
+        exp = int(gold['C0300A'])+int(gold['C0300B'])+int(gold['C0300C']) 
+        if int(gold['C0300']) != exp: errors.append(f'C0300 mismatch: {gold["C0300"]} != 
+{exp}') 
+    if all(k in gold for k in ['C0400A','C0400B','C0400C','C0400']): 
+        exp = int(gold['C0400A'])+int(gold['C0400B'])+int(gold['C0400C']) 
+        if int(gold['C0400']) != exp: errors.append(f'C0400 mismatch: {gold["C0400"]} != 
+{exp}') 
+
+
+
+    if all(k in gold for k in ['C0200','C0300','C0400','C0500']): 
+        exp = int(gold['C0200'])+int(gold['C0300'])+int(gold['C0400']) 
+        if int(gold['C0500']) != exp: errors.append(f'C0500 mismatch: {gold["C0500"]} != 
+{exp}') 
+    # PHQ gate 
+    a1 = int(gold.get('D0150A1', 0)); b1 = int(gold.get('D0150B1', 0)) 
+    if a1+b1 < 3: 
+        a2 = int(gold.get('D0150A2',0)) if a1==1 else 0 
+        b2 = int(gold.get('D0150B2',0)) if b1==1 else 0 
+        if str(gold.get('D0160')) != str(a2+b2): 
+            errors.append(f'D0160 gate violation: got {gold["D0160"]}, should be {a2+b2}') 
+    # N0415 completeness 
+    for sub in 'ABCDEFGHI': 
+        if f'N0415{sub}' not in gold: 
+            errors.append(f'N0415{sub} missing from gold standard') 
+    # GG admission completeness 
+    must_have = 
+['GG0130D1','GG0130E1','GG0170A1','GG0170B1','GG0170C1','GG0170D1','GG0170E1','GG0170F1'] 
+    for k in must_have: 
+        if k not in gold: errors.append(f'{k} missing from gold standard') 
+    return errors 
+
+ 
+
+What's Now Fixed vs. Still Pending 
+ 
+
+✅  Fixed by this revision (gold prompt) ⚠️  Not covered — separate work items 
+
+• A1010 field definition error removed • metadata.json validation_status update logic (pipeline 
+
+• PHQ_MOOD_INTERVIEW key banned from output code) 
+
+• N0415 A–I all derived from medication JSON • Physician NPI fictional-range enforcement (referral 
+generation, not gold prompt) 
+
+• N0415B=1 (Warfarin) and N0415F=1 (Digoxin) 
+corrected • M0080 NPI field in gold updated to fictional range in 
+
+pipeline code 
+• GG0130D1/E1 explicitly required in rule 
+
+• H-6 M1330 wound consistency (CHF archetype — 
+• GG0170A1–F1 all explicitly required in rule 
+
+gap needs clinical review) 
+• BIMS C0400 arithmetic verified and corrected 
+
+• GG_CONSISTENCY_REPAIR_PROMPT — can now 
+• PHQ D0160 re-verified against PHQ-2 gate be simplified (gold no longer needs repair if gap 
+• Authority rule hardened — gap propagated verbatim prompt is correct) 
+
+• Output scope rule added — non-OASIS keys banned

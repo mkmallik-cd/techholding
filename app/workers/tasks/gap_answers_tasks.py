@@ -1,6 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
+from app.services.llm.langfuse_tracing import clear_step_context, set_step_context
 from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.db.session import SessionLocal
@@ -8,6 +9,7 @@ from app.repositories.patient_generation_repository import PatientGenerationRepo
 from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.gap_answers_generator import GapAnswersGenerator
 from app.workers.celery_app import celery_app
+from app.workers.tasks.llm_audit_tasks import _extract_audit_context, _format_audit_conflicts
 
 logger = get_logger(__name__)
 
@@ -23,7 +25,7 @@ logger = get_logger(__name__)
     time_limit=900,
     soft_time_limit=780,
 )
-def generate_gap_answers(self, *, job_id: str) -> None:
+def generate_gap_answers(self, *, job_id: str, is_audit_fix: bool = False) -> None:
     set_tracking_id(job_id)
     db = SessionLocal()
     try:
@@ -34,6 +36,7 @@ def generate_gap_answers(self, *, job_id: str) -> None:
             return
 
         repo.mark_processing(job)
+        set_step_context("step4_gap_answers", job.patient_external_id, job.selected_model)
 
         # result_payload contains Step 1+2+3 metadata and artifact paths
         metadata = job.result_payload or {}
@@ -64,13 +67,55 @@ def generate_gap_answers(self, *, job_id: str) -> None:
                     ambient_scribe_path,
                 )
 
-        gap_gen = GapAnswersGenerator()
-        gap_answers = gap_gen.generate(
-            referral_text=referral_text,
-            metadata=metadata,
-            scribe_text=scribe_text,
-            model_id=job.selected_model,
+        audit_context = (
+            _extract_audit_context(metadata["llm_audit_report_path"])
+            if metadata.get("llm_audit_report_path")
+            else None
         )
+
+        gap_gen = GapAnswersGenerator()
+        if is_audit_fix and metadata.get("llm_audit_report_path") and metadata.get("gap_answers_path"):
+            # Fix mode: load all existing documents and use the targeted revision prompt.
+            import json as _json
+            from pathlib import Path as _Path
+            existing_gap_answers = _Path(metadata["gap_answers_path"]).read_text(encoding="utf-8")
+            medication_list_json = _json.dumps(
+                _json.loads(_Path(metadata["medication_list_path"]).read_text(encoding="utf-8"))
+                if metadata.get("medication_list_path") else {}, indent=2
+            )
+            ambient_scribe_text = (
+                _Path(metadata["ambient_scribe_path"]).read_text(encoding="utf-8")
+                if metadata.get("ambient_scribe_path") else "(no ambient scribe generated)"
+            )
+            oasis_gold_standard_json = _json.dumps(
+                _json.loads(_Path(metadata["oasis_gold_standard_path"]).read_text(encoding="utf-8"))
+                if metadata.get("oasis_gold_standard_path") else {}, indent=2
+            )
+            audit_conflicts_text = _format_audit_conflicts(metadata["llm_audit_report_path"])
+            gap_answers = gap_gen.generate_fix(
+                referral_text=referral_text,
+                ambient_scribe_text=ambient_scribe_text,
+                medication_list_json=medication_list_json,
+                current_gap_answers_json=existing_gap_answers,
+                oasis_gold_standard_json=oasis_gold_standard_json,
+                audit_conflicts_text=audit_conflicts_text,
+                model_id=job.selected_model,
+            )
+        else:
+            import json as _json
+            from pathlib import Path as _Path
+            _medication_list = (
+                _json.loads(_Path(metadata["medication_list_path"]).read_text(encoding="utf-8"))
+                if metadata.get("medication_list_path") else {}
+            )
+            gap_answers = gap_gen.generate(
+                referral_text=referral_text,
+                metadata=metadata,
+                scribe_text=scribe_text,
+                medication_list=_medication_list,
+                model_id=job.selected_model,
+                audit_context=audit_context,
+            )
         logger.info("Step 4: tap_tap_gap_answers.json generated for job_id=%s", job_id)
 
         from app.config.settings import get_settings
@@ -96,7 +141,7 @@ def generate_gap_answers(self, *, job_id: str) -> None:
         from app.workers.celery_app import _STEP5_QUEUE
         from app.workers.tasks.oasis_gold_standard_tasks import generate_oasis_gold_standard
         generate_oasis_gold_standard.apply_async(
-            kwargs={"job_id": job_id},
+            kwargs={"job_id": job_id, "is_audit_fix": is_audit_fix},
             queue=_STEP5_QUEUE,
             routing_key=_STEP5_QUEUE,
         )
@@ -120,4 +165,5 @@ def generate_gap_answers(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_step_context()
         clear_tracking_id()

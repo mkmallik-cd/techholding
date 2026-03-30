@@ -13,13 +13,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
+from app.services.llm.langfuse_tracing import clear_step_context, set_step_context
 from app.utils.logger import clear_tracking_id, get_logger, set_tracking_id
 
 from app.db.session import SessionLocal
 from app.repositories.patient_generation_repository import PatientGenerationRepository
 from app.services.artifact_writer import ArtifactWriter
 from app.services.generators.consistency_validator import ConsistencyValidator
-from app.workers.celery_app import _STEP4_QUEUE, _STEP6_QUEUE, celery_app
+from app.workers.celery_app import _STEP6_QUEUE, celery_app
 
 logger = get_logger(__name__)
 
@@ -47,6 +48,7 @@ def validate_consistency(self, *, job_id: str) -> None:
             return
 
         repo.mark_processing(job)
+        set_step_context("step6_consistency_validation", job.patient_external_id, job.selected_model)
 
         metadata = job.result_payload or {}
         if not metadata:
@@ -106,59 +108,52 @@ def validate_consistency(self, *, job_id: str) -> None:
 
         # ── Persist final status ───────────────────────────────────────────────
         if result.is_valid:
-            repo.mark_completed(
-                job,
-                artifact_path=artifact_path,
-                result_payload={
-                    **metadata,
-                    "validation_report_path": artifact_path + "/validation_report.json",
-                },
-            )
-            logger.info(
-                "Step 7 completed (VALID): job_id=%s patient=%s",
-                job_id,
-                job.patient_external_id,
-            )
-        else:
-            _MAX_REPAIR_ATTEMPTS = 3
-            if (job.repair_attempt or 0) < _MAX_REPAIR_ATTEMPTS:
-                repo.increment_repair_attempt(job)
-                repair_attempt_num = job.repair_attempt
+            updated_payload = {
+                **metadata,
+                "validation_report_path": artifact_path + "/validation_report.json",
+            }
+            perform_llm_audit = (job.request_payload or {}).get("perform_llm_audit", False)
+            if perform_llm_audit:
+                # Step 7 passed and the caller requested the LLM audit — advance to Step 8.
+                from app.workers.celery_app import _STEP7_QUEUE
+                from app.workers.tasks.llm_audit_tasks import run_llm_audit
+
                 repo.advance_to_next_step(
                     job,
-                    next_phase="repair_gap_answers",
-                    step_result_payload={
-                        **metadata,
-                        "validation_errors": result.errors,
-                        "validation_report_path": artifact_path + "/validation_report.json",
-                    },
+                    next_phase="step7_llm_audit",
+                    step_result_payload=updated_payload,
                     step_artifact_path=artifact_path,
                 )
-                logger.warning(
-                    "Step 7 INVALID (attempt %d/%d): job_id=%s patient=%s errors=%d"
-                    " — queuing repair chain",
-                    repair_attempt_num,
-                    _MAX_REPAIR_ATTEMPTS,
+                logger.info(
+                    "Step 7 VALID — dispatching Step 8 LLM audit: job_id=%s patient=%s",
                     job_id,
                     job.patient_external_id,
-                    len(result.errors),
                 )
-                from app.workers.tasks.repair_tasks import repair_gap_answers
-                repair_gap_answers.apply_async(
+                run_llm_audit.apply_async(
                     kwargs={"job_id": job_id},
-                    queue=_STEP4_QUEUE,
-                    routing_key=_STEP4_QUEUE,
+                    queue=_STEP7_QUEUE,
+                    routing_key=_STEP7_QUEUE,
                 )
             else:
-                repo.mark_invalid_permanent(job, validation_errors=result.errors)
-                logger.error(
-                    "Step 7 permanently INVALID (all %d repair attempts exhausted):"
-                    " job_id=%s patient=%s errors=%d",
-                    _MAX_REPAIR_ATTEMPTS,
+                repo.mark_completed(
+                    job,
+                    artifact_path=artifact_path,
+                    result_payload=updated_payload,
+                )
+                logger.info(
+                    "Step 7 completed (VALID): job_id=%s patient=%s",
                     job_id,
                     job.patient_external_id,
-                    len(result.errors),
                 )
+        else:
+            repo.mark_invalid_permanent(job, validation_errors=result.errors)
+            logger.error(
+                "Step 7 INVALID — marking permanently invalid:"
+                " job_id=%s patient=%s errors=%d",
+                job_id,
+                job.patient_external_id,
+                len(result.errors),
+            )
 
     except Exception as exc:
         logger.error("Step 7 task failed: job_id=%s error=%s", job_id, exc, exc_info=True)
@@ -174,4 +169,5 @@ def validate_consistency(self, *, job_id: str) -> None:
         raise
     finally:
         db.close()
+        clear_step_context()
         clear_tracking_id()

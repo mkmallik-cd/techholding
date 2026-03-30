@@ -32,13 +32,14 @@ class AmbientScribeGenerator:
         # Shared Bedrock client with per-model caching
         self.bedrock = BedrockClient()
 
-    def generate(self, *, referral_text: str, metadata: dict, model_id: str) -> str:
+    def generate(self, *, referral_text: str, metadata: dict, model_id: str, audit_context: str | None = None) -> str:
         """Generate ambient_scribe.txt from the referral packet and Step 1 metadata.
 
         Args:
             referral_text: Plain-text referral packet produced by Step 2.
             metadata:      Serialised Step 1 metadata dict.
             model_id:      Bedrock model ARN / short-name to use.
+            audit_context: Optional conflict summary from a previous LLM audit run.
 
         Returns:
             Validated plain-text nursing assessment note string.
@@ -53,6 +54,8 @@ class AmbientScribeGenerator:
         nursing_ctx = ARCHETYPE_NURSING_CONTEXT.get(archetype, ARCHETYPE_NURSING_CONTEXT["chf_exacerbation"])
 
         prompt = self._build_prompt(referral_text, metadata, hints, nursing_ctx)
+        if audit_context:
+            prompt += f"\n\n{audit_context}"
         response = self.bedrock.invoke_json(
             prompt=prompt,
             model_id=model_id,
@@ -120,3 +123,36 @@ class AmbientScribeGenerator:
             )
 
         return scribe_text
+
+    def generate_fix(
+        self,
+        *,
+        referral_text: str,
+        current_ambient_scribe_text: str,
+        medication_list_json: str,
+        gap_answers_json: str,
+        oasis_gold_standard_json: str,
+        audit_conflicts_text: str,
+        model_id: str,
+    ) -> str:
+        """Produce a revised ambient_scribe.txt that resolves LLM audit conflicts.
+
+        Uses the targeted AMBIENT_SCRIBE_FIX_PROMPT which shows all existing
+        documents + the audit conflict summary and asks for a minimal revision.
+        """
+        from app.config.prompts import AMBIENT_SCRIBE_FIX_PROMPT
+        prompt = AMBIENT_SCRIBE_FIX_PROMPT.format(
+            referral_text=referral_text[:6000],
+            current_ambient_scribe_text=current_ambient_scribe_text,
+            medication_list_json=medication_list_json[:2000],
+            gap_answers_json=gap_answers_json[:3000],
+            oasis_gold_standard_json=oasis_gold_standard_json[:3000],
+            audit_conflicts_text=audit_conflicts_text,
+        )
+        response = self.bedrock.invoke_json(
+            prompt=prompt,
+            model_id=model_id,
+            max_tokens=3000,
+        )
+        scribe_text = response["text"].strip()
+        return self._validate(scribe_text)

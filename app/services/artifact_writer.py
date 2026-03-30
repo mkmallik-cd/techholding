@@ -96,12 +96,16 @@ class ArtifactWriter:
         patient_external_id: str,
         oasis_gold_standard: dict,
     ) -> str:
-        """Write oasis_gold_standard.json (PRD Step 6)."""
+        """Write oasis_gold_standard.json (PRD Step 6).
+
+        The generator already includes _generated + _note header fields; do not
+        inject _synthetic_label here so the format matches the SYN_0024 reference.
+        """
         patient_dir = self.output_base_path / patient_external_id
         patient_dir.mkdir(parents=True, exist_ok=True)
 
         (patient_dir / "oasis_gold_standard.json").write_text(
-            json.dumps(_inject_synthetic_label(oasis_gold_standard), indent=2), encoding="utf-8"
+            json.dumps(oasis_gold_standard, indent=2), encoding="utf-8"
         )
 
         return str(patient_dir)
@@ -118,6 +122,22 @@ class ArtifactWriter:
 
         (patient_dir / "validation_report.json").write_text(
             json.dumps(_inject_synthetic_label(validation_report), indent=2), encoding="utf-8"
+        )
+
+        return str(patient_dir)
+
+    def write_llm_audit_artifacts(
+        self,
+        *,
+        patient_external_id: str,
+        audit_report: dict,
+    ) -> str:
+        """Write llm_audit_report.json (Step 8 — LLM cross-document consistency audit)."""
+        patient_dir = self.output_base_path / patient_external_id
+        patient_dir.mkdir(parents=True, exist_ok=True)
+
+        (patient_dir / "llm_audit_report.json").write_text(
+            json.dumps(_inject_synthetic_label(audit_report), indent=2), encoding="utf-8"
         )
 
         return str(patient_dir)
